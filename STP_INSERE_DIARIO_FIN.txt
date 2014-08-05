@@ -38,6 +38,8 @@ declare variable v_dta_mes_fim varchar(2);
 declare variable v_dta_ano_fim varchar(4);
 declare variable v_dta_ini varchar(20);
 declare variable v_dta_fim varchar(20);
+declare variable v_cod_conta_compens_previa integer;
+declare variable v_flg_ignora_trans_quit_previa char(1);
 begin
 /* 
 STATUS: CHECK-IN
@@ -126,7 +128,9 @@ OS: 6441 - Criar conta transitoria para pagamento entre lojas
         v_FLG_LANCTO_MULTIPLO,
         v_COD_CHAVE_CTB,
         v_QTD_REG_CRITICADO,
-        v_TIPO_OPERACAO_ORIGEM
+        v_TIPO_OPERACAO_ORIGEM,
+        v_COD_CONTA_COMPENS_PREVIA,
+        v_FLG_IGNORA_TRANS_QUIT_PREVIA
      FROM
        STP_RETORNA_DIARIO_FIN (:PAR_COD_LOJA,
                                :PAR_DTA_INICIO,
@@ -152,7 +156,9 @@ OS: 6441 - Criar conta transitoria para pagamento entre lojas
         v_FLG_LANCTO_MULTIPLO,
         v_COD_CHAVE_CTB,
         v_QTD_REG_CRITICADO,
-        v_TIPO_OPERACAO_ORIGEM
+        v_TIPO_OPERACAO_ORIGEM,
+        v_COD_CONTA_COMPENS_PREVIA,
+        v_FLG_IGNORA_TRANS_QUIT_PREVIA
     do
     begin
       if (v_QTD_REG_CRITICADO > 0) then
@@ -189,8 +195,9 @@ OS: 6441 - Criar conta transitoria para pagamento entre lojas
        end
     end
 
-    /*Quando for quitacao multiloja insere lancamento da transitoria contra cheques a compensar.*/
-    execute procedure STP_INSERE_DIARIO_CHEQUE(PAR_COD_LOJA, PAR_DTA_INICIO, PAR_DTA_FINAL, v_TIPO_CONTA);
+    if ((coalesce(v_COD_CONTA_COMPENS_PREVIA,0) <> 0) and (v_FLG_IGNORA_TRANS_QUIT_PREVIA = 'N')) then
+      /*Quando for quitacao multiloja insere lancamento da transitoria contra cheques a compensar.*/
+      execute procedure STP_INSERE_DIARIO_CHEQUE(PAR_COD_LOJA, PAR_DTA_INICIO, PAR_DTA_FINAL, v_TIPO_CONTA);
 
     /*INSERE LANCAMENTO CONTABIL DE RECEBIMENTOS DE CARTAO*/
     /*AGRUPADOS POR CONTA CONTABIL E HISTORICO PADRAO*/
@@ -214,7 +221,8 @@ OS: 6441 - Criar conta transitoria para pagamento entre lojas
         MAX(v_COD_CHAVE_CTB) AS v_COD_CHAVE_CTB,
         v_NUM_BORDERO,
         MAX(v_QTD_REG_CRITICADO) AS v_QTD_REG_CRITICADO,
-        v_TIPO_OPERACAO_ORIGEM
+        v_TIPO_OPERACAO_ORIGEM,
+        v_COD_CONTA_COMPENS_PREVIA
      FROM
        STP_RETORNA_DIARIO_FIN (:PAR_COD_LOJA,
                                :PAR_DTA_INICIO,
@@ -236,7 +244,8 @@ OS: 6441 - Criar conta transitoria para pagamento entre lojas
         v_NUM_DOCTO_PGTO,
         v_FLG_LANCTO_MULTIPLO,
         v_NUM_BORDERO,
-        v_TIPO_OPERACAO_ORIGEM
+        v_TIPO_OPERACAO_ORIGEM,
+        v_COD_CONTA_COMPENS_PREVIA
      into
         v_COD_CHAVE_MOVBCO,
         v_COD_LOJA,
@@ -256,7 +265,8 @@ OS: 6441 - Criar conta transitoria para pagamento entre lojas
         v_COD_CHAVE_CTB,
         v_NUM_BORDERO,
         v_QTD_REG_CRITICADO,
-        v_TIPO_OPERACAO_ORIGEM
+        v_TIPO_OPERACAO_ORIGEM,
+        v_COD_CONTA_COMPENS_PREVIA
     do
     begin
       if (v_QTD_REG_CRITICADO > 0) then
