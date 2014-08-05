@@ -1,0 +1,330 @@
+SET TERM ^ ;
+
+CREATE OR ALTER PROCEDURE STP_INSERE_DIARIO_FIN (
+    par_cod_loja integer,
+    par_dta_inicio timestamp,
+    par_dta_final timestamp,
+    par_tipo_lancto integer)
+as
+declare variable v_cod_chave_movbco integer;
+declare variable v_cod_loja integer;
+declare variable v_conta_contabil_deb varchar(25);
+declare variable v_conta_contabil_cred varchar(25);
+declare variable v_valor double precision;
+declare variable v_dta_lancamento timestamp;
+declare variable v_complemento varchar(500);
+declare variable v_cod_historico integer;
+declare variable v_cod_conta_cred integer;
+declare variable v_cod_conta_deb integer;
+declare variable v_cod_lote_lancto integer;
+declare variable v_cod_chave_fin integer;
+declare variable v_ano_mes char(6);
+declare variable v_num_docto_pgto varchar(25);
+declare variable v_flg_lancto_multiplo char(1);
+declare variable v_cod_chave_ctb integer;
+declare variable v_tipo_conta integer;
+declare variable v_flg_estorno char(1);
+declare variable v_num_bordero integer;
+declare variable v_qtd_reg_criticado integer;
+declare variable v_cod_conta_hist integer;
+declare variable v_tipo_operacao_origem integer;
+declare variable v_filtro_origem varchar(25);
+declare variable v_sql varchar(5000);
+declare variable v_dta_dia_ini varchar(2);
+declare variable v_dta_mes_ini varchar(2);
+declare variable v_dta_ano_ini varchar(4);
+declare variable v_dta_dia_fim varchar(2);
+declare variable v_dta_mes_fim varchar(2);
+declare variable v_dta_ano_fim varchar(4);
+declare variable v_dta_ini varchar(20);
+declare variable v_dta_fim varchar(20);
+begin
+/* 
+STATUS: CHECK-IN
+DATA: 25/04/2014
+VERSAO: 5.7.6
+USUARIO: GUSTAVO SALA
+OS: 6441 - Criar conta transitoria para pagamento entre lojas
+*/
+
+  v_FILTRO_ORIGEM = NULL;
+
+  /*TODOS*/
+  if (PAR_TIPO_LANCTO = 0) then
+    v_TIPO_CONTA = -1;
+
+  /*RECEBIMENTO*/
+  if (PAR_TIPO_LANCTO = 3) then
+  begin
+    v_TIPO_CONTA = 1;
+    v_TIPO_OPERACAO_ORIGEM = 2;
+    v_FILTRO_ORIGEM = '2';
+  end
+
+  /*PAGAMENTO*/
+  if (PAR_TIPO_LANCTO = 4) then
+  begin
+    v_TIPO_CONTA = 0;
+    v_TIPO_OPERACAO_ORIGEM = 3;
+
+    if (v_FILTRO_ORIGEM is not null) then
+      v_FILTRO_ORIGEM = v_FILTRO_ORIGEM || ',3';
+    else
+      v_FILTRO_ORIGEM = '3';
+  end
+
+  if (v_TIPO_CONTA = -1) then
+    v_FILTRO_ORIGEM = '2,3';
+
+  if (v_FILTRO_ORIGEM is not null) then
+    v_FILTRO_ORIGEM = '(' || v_FILTRO_ORIGEM || ')';
+
+  v_dta_dia_ini = extract(day from   :PAR_DTA_INICIO);
+  v_dta_mes_ini = extract(month from :PAR_DTA_INICIO);
+  v_dta_ano_ini = extract(year from  :PAR_DTA_INICIO);
+  v_dta_dia_fim = extract(day from   :PAR_DTA_FINAL);
+  v_dta_mes_fim = extract(month from :PAR_DTA_FINAL);
+  v_dta_ano_fim = extract(year from  :PAR_DTA_FINAL);      
+
+  v_dta_ini =  '''' || v_dta_dia_ini ||'.'|| v_dta_mes_ini ||'.'|| v_dta_ano_ini || '''';
+  v_dta_fim =  '''' || v_dta_dia_fim ||'.'|| v_dta_mes_fim ||'.'|| v_dta_ano_fim || '''';
+
+  v_SQL =
+      'DELETE FROM TAB_DIARIO
+      WHERE 
+      NUM_STATUS = 0
+      AND
+      FLG_AUTO = 1
+      AND
+      FLG_CONFERIDO_CTB = ''N''
+      AND
+      DTA_LANCAMENTO BETWEEN ' || v_dta_ini || ' AND ' || v_dta_fim ||
+      ' AND
+      TIPO_OPERACAO IN ' || v_FILTRO_ORIGEM ||
+      ' AND
+      COD_LOJA = ' || :PAR_COD_LOJA || ';';
+
+  EXECUTE STATEMENT v_SQL;
+
+
+    FOR
+     SELECT
+        v_COD_CHAVE_MOVBCO,
+        v_COD_LOJA,
+        v_CONTA_CONTABIL_DEB,
+        v_CONTA_CONTABIL_CRED,
+        v_VALOR,
+        v_DTA_LANCAMENTO,
+        v_COMPLEMENTO,
+        v_COD_HISTORICO,
+        v_COD_CONTA_CRED,
+        v_COD_CONTA_DEB,
+        v_COD_LOTE_LANCTO,
+        v_COD_CHAVE_FIN,
+        v_ANO_MES,
+        v_NUM_DOCTO_PGTO,
+        v_FLG_LANCTO_MULTIPLO,
+        v_COD_CHAVE_CTB,
+        v_QTD_REG_CRITICADO,
+        v_TIPO_OPERACAO_ORIGEM
+     FROM
+       STP_RETORNA_DIARIO_FIN (:PAR_COD_LOJA,
+                               :PAR_DTA_INICIO,
+                               :PAR_DTA_FINAL,
+                               :v_TIPO_CONTA)
+     WHERE
+       v_FLG_RECEB_CARTAO = 'N' /*SOMENTE QUITACOES QUE NAO SEJAM RECEBIMENTO DE CARTAO*/
+     into
+        v_COD_CHAVE_MOVBCO,
+        v_COD_LOJA,
+        v_CONTA_CONTABIL_DEB,
+        v_CONTA_CONTABIL_CRED,
+        v_VALOR,
+        v_DTA_LANCAMENTO,
+        v_COMPLEMENTO,
+        v_COD_HISTORICO,
+        v_COD_CONTA_CRED,
+        v_COD_CONTA_DEB,
+        v_COD_LOTE_LANCTO,
+        v_COD_CHAVE_FIN,
+        v_ANO_MES,
+        v_NUM_DOCTO_PGTO,
+        v_FLG_LANCTO_MULTIPLO,
+        v_COD_CHAVE_CTB,
+        v_QTD_REG_CRITICADO,
+        v_TIPO_OPERACAO_ORIGEM
+    do
+    begin
+      if (v_QTD_REG_CRITICADO > 0) then
+        DELETE FROM TAB_DIARIO
+        WHERE
+        NUM_STATUS = 0
+        AND
+        FLG_AUTO = 1 /* AUTOMATICO */
+        AND
+        TIPO_OPERACAO in (2,3) /* QUITACAO */
+        AND
+        COD_LOTE_LANCTO = :v_COD_LOTE_LANCTO;
+      else
+       begin
+        execute procedure
+          STP_INSERE_DIARIO(v_COD_LOJA,
+                            v_ANO_MES,
+                            v_DTA_LANCAMENTO,
+                            v_CONTA_CONTABIL_CRED,
+                            v_CONTA_CONTABIL_DEB,
+                            v_COD_HISTORICO,
+                            v_NUM_DOCTO_PGTO,
+                            v_VALOR,
+                            1,
+                            v_TIPO_OPERACAO_ORIGEM,
+                            v_COD_CONTA_DEB,
+                            v_COD_CONTA_CRED,
+                            v_COD_CHAVE_CTB,
+                            v_COD_CHAVE_FIN,
+                            v_COMPLEMENTO,
+                            v_COD_LOTE_LANCTO,
+                            v_FLG_LANCTO_MULTIPLO,
+                            v_COD_CHAVE_MOVBCO);
+       end
+    end
+
+    /*Quando for quitacao multiloja insere lancamento da transitoria contra cheques a compensar.*/
+    execute procedure STP_INSERE_DIARIO_CHEQUE(PAR_COD_LOJA, PAR_DTA_INICIO, PAR_DTA_FINAL, v_TIPO_CONTA);
+
+    /*INSERE LANCAMENTO CONTABIL DE RECEBIMENTOS DE CARTAO*/
+    /*AGRUPADOS POR CONTA CONTABIL E HISTORICO PADRAO*/
+    FOR
+     SELECT
+        v_COD_CHAVE_MOVBCO,
+        v_COD_LOJA,
+        v_CONTA_CONTABIL_DEB,
+        v_CONTA_CONTABIL_CRED,
+        SUM(v_VALOR) AS v_VALOR,
+        v_DTA_LANCAMENTO,
+        MAX(v_COMPLEMENTO) AS v_COMPLEMENTO,
+        v_COD_HISTORICO,
+        v_COD_CONTA_CRED,
+        v_COD_CONTA_DEB,
+        v_COD_LOTE_LANCTO,
+        MAX(v_COD_CHAVE_FIN) AS v_COD_CHAVE_FIN,
+        v_ANO_MES,
+        v_NUM_DOCTO_PGTO,
+        v_FLG_LANCTO_MULTIPLO,
+        MAX(v_COD_CHAVE_CTB) AS v_COD_CHAVE_CTB,
+        v_NUM_BORDERO,
+        MAX(v_QTD_REG_CRITICADO) AS v_QTD_REG_CRITICADO,
+        v_TIPO_OPERACAO_ORIGEM
+     FROM
+       STP_RETORNA_DIARIO_FIN (:PAR_COD_LOJA,
+                               :PAR_DTA_INICIO,
+                               :PAR_DTA_FINAL,
+                               :v_TIPO_CONTA)
+     WHERE
+       v_FLG_RECEB_CARTAO = 'S' /*SOMENTE QUITACOES DE RECEBIMENTO DE CARTAO*/
+     GROUP BY
+        v_COD_CHAVE_MOVBCO,
+        v_COD_LOJA,
+        v_CONTA_CONTABIL_DEB,
+        v_CONTA_CONTABIL_CRED,
+        v_DTA_LANCAMENTO,
+        v_COD_HISTORICO,
+        v_COD_CONTA_CRED,
+        v_COD_CONTA_DEB,
+        v_COD_LOTE_LANCTO,
+        v_ANO_MES,
+        v_NUM_DOCTO_PGTO,
+        v_FLG_LANCTO_MULTIPLO,
+        v_NUM_BORDERO,
+        v_TIPO_OPERACAO_ORIGEM
+     into
+        v_COD_CHAVE_MOVBCO,
+        v_COD_LOJA,
+        v_CONTA_CONTABIL_DEB,
+        v_CONTA_CONTABIL_CRED,
+        v_VALOR,
+        v_DTA_LANCAMENTO,
+        v_COMPLEMENTO,
+        v_COD_HISTORICO,
+        v_COD_CONTA_CRED,
+        v_COD_CONTA_DEB,
+        v_COD_LOTE_LANCTO,
+        v_COD_CHAVE_FIN,
+        v_ANO_MES,
+        v_NUM_DOCTO_PGTO,
+        v_FLG_LANCTO_MULTIPLO,
+        v_COD_CHAVE_CTB,
+        v_NUM_BORDERO,
+        v_QTD_REG_CRITICADO,
+        v_TIPO_OPERACAO_ORIGEM
+    do
+    begin
+      if (v_QTD_REG_CRITICADO > 0) then
+        DELETE FROM TAB_DIARIO
+        WHERE
+        NUM_STATUS = 0
+        AND
+        FLG_AUTO = 1 /* AUTOMATICO */
+        AND
+        TIPO_OPERACAO in (2,3) /* QUITACAO */
+        AND
+        COD_LOTE_LANCTO = :v_COD_LOTE_LANCTO;
+      else
+      begin
+          v_FLG_ESTORNO = 'N';
+    
+          if (SUBSTRING(v_COMPLEMENTO FROM 1 FOR 9) = '(ESTORNO)') then
+            v_FLG_ESTORNO = 'S';
+
+          if (v_COD_CONTA_CRED is not null) then
+            v_COD_CONTA_HIST = v_COD_CONTA_CRED;
+          else
+            v_COD_CONTA_HIST = v_COD_CONTA_DEB;
+    
+          execute procedure STP_HISTORICO_PADRAO(:v_COD_HISTORICO, :v_COD_CONTA_HIST, 2,
+          0, 0, NULL,
+          '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+          returning_values(:v_COMPLEMENTO);
+    
+          v_COMPLEMENTO = v_COMPLEMENTO || ' BORD.: ' || v_NUM_BORDERO;
+    
+          if (v_FLG_ESTORNO = 'S') then
+            v_COMPLEMENTO = '(ESTORNO) ' || v_COMPLEMENTO;
+    
+          execute procedure
+            STP_INSERE_DIARIO(v_COD_LOJA,
+                              v_ANO_MES,
+                              v_DTA_LANCAMENTO,
+                              v_CONTA_CONTABIL_CRED,
+                              v_CONTA_CONTABIL_DEB,
+                              v_COD_HISTORICO,
+                              v_NUM_DOCTO_PGTO,
+                              v_VALOR,
+                              1,
+                              v_TIPO_OPERACAO_ORIGEM,
+                              v_COD_CONTA_DEB,
+                              v_COD_CONTA_CRED,
+                              v_COD_CHAVE_CTB,
+                              v_COD_CHAVE_FIN,
+                              v_COMPLEMENTO,
+                              v_COD_LOTE_LANCTO,
+                              v_FLG_LANCTO_MULTIPLO,
+                              v_COD_CHAVE_MOVBCO);
+      end /*if v_QTD_REG_CRITICADO > 0*/
+    end
+end^
+
+SET TERM ; ^
+
+GRANT EXECUTE ON PROCEDURE STP_RETORNA_DIARIO_FIN TO PROCEDURE STP_INSERE_DIARIO_FIN;
+
+GRANT SELECT,DELETE ON TAB_DIARIO TO PROCEDURE STP_INSERE_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_INSERE_DIARIO TO PROCEDURE STP_INSERE_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_INSERE_DIARIO_CHEQUE TO PROCEDURE STP_INSERE_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_HISTORICO_PADRAO TO PROCEDURE STP_INSERE_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_INSERE_DIARIO_FIN TO "PUBLIC";
+GRANT EXECUTE ON PROCEDURE STP_INSERE_DIARIO_FIN TO SYSDBA;
