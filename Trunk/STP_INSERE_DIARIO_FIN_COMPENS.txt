@@ -1,0 +1,1120 @@
+SET TERM ^ ;
+
+CREATE OR ALTER PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS (
+    par_cod_loja integer,
+    par_dta_inicio timestamp,
+    par_dta_final timestamp,
+    par_tipo_lancto integer)
+as
+declare variable v_tipo_conta integer;
+declare variable v_num_reg integer;
+declare variable v_ano_mes varchar(6);
+declare variable v_conta_debito varchar(25);
+declare variable v_conta_credito varchar(25);
+declare variable v_cod_historico integer;
+declare variable v_valor double precision;
+declare variable v_flg_auto integer;
+declare variable v_tipo_operacao integer;
+declare variable v_cod_conta_deb integer;
+declare variable v_cod_conta_cred integer;
+declare variable v_cod_chave_ctb integer;
+declare variable v_cod_chave_fin integer;
+declare variable v_complemento varchar(500);
+declare variable v_num_docto_titulo varchar(25);
+declare variable v_cod_loja_cc integer;
+declare variable v_dta_lancamento timestamp;
+declare variable v_num_docto varchar(25);
+declare variable v_cod_lote_lancto integer;
+declare variable v_cod_chave_movbco integer;
+declare variable v_cod_conta_compens integer;
+declare variable v_cod_historico_compens integer;
+declare variable v_conta_contabil_compens varchar(25);
+declare variable v_flg_cheque char(1);
+declare variable v_val_tot_ded_cheque double precision;
+declare variable v_val_tot_ded_n_cheque double precision;
+declare variable v_val_tot_acres_cheque double precision;
+declare variable v_val_tot_acres_n_cheque double precision;
+declare variable v_qtd_lojas_dif_cc integer;
+declare variable v_flg_estorno char(1);
+declare variable v_dta_ordenada timestamp;
+declare variable v_cod_chave_fluxo integer;
+declare variable v_cod_chave_movbco_origem integer;
+declare variable v_num_tipo integer;
+declare variable v_cod_conta_cheque integer;
+declare variable v_conta_cheque varchar(25);
+declare variable v_cod_chave_movbco_old integer;
+declare variable v_cod_conta_banco integer;
+declare variable v_conta_banco varchar(25);
+begin
+/* 
+STATUS: CHECK-IN
+DATA: 25/04/2014
+VERSAO: 5.7.6
+USUARIO: GUSTAVO SALA
+OS: 6441 - Criar conta transitoria para pagamento entre lojas
+*/
+
+    SELECT
+      COD_CONTA_COMPENS,
+      COD_HISTORICO_COMPENS,
+      TAB_PLANO_CONTA.CONTA_CONTABIL
+    FROM
+      TAB_PARAMETRO_EMPRESA
+    INNER JOIN TAB_PLANO_CONTA ON
+      TAB_PARAMETRO_EMPRESA.COD_CONTA_COMPENS = TAB_PLANO_CONTA.COD_CONTA
+    into
+      :v_COD_CONTA_COMPENS,
+      :v_COD_HISTORICO_COMPENS,
+      :v_CONTA_CONTABIL_COMPENS;
+
+  /*SE MARCAR TODOS OU PAGAMENTOS*/
+  if ((PAR_TIPO_LANCTO = 0) or (PAR_TIPO_LANCTO = 4)) then
+  /*CONTABILIZA CHEQUES COMPENSADOS - PAGAMENTOS*/
+  for
+    SELECT
+      COD_LOJA AS COD_LOJA_CC ,
+      DTA_LANCAMENTO,
+      CONTA_DEBITO,
+      CONTA_CREDITO,
+      COD_HISTORICO,
+      NUM_DOCTO_PGTO,
+      SUM(VAL_BRUTO) AS VAL_BRUTO,
+      FLG_AUTO,
+      TIPO_OPERACAO,
+      COD_CONTA_DEB,
+      COD_CONTA_CRED,
+      MAX(COD_CHAVE_CTB) AS COD_CHAVE_CTB,
+      MAX(COD_CHAVE_FIN) AS COD_CHAVE_FIN,
+      NUM_DOCTO_TITULO,
+      COD_CHAVE_MOVBCO,
+      FLG_CHEQUE,
+      FLG_ESTORNO,
+      DTA_ORDENADA
+    FROM
+    (
+    SELECT
+      TAB_BANCO_CC.COD_LOJA,
+      TAB_FLUXO_LOTE.DTA_COMPENSACAO AS DTA_LANCAMENTO,
+      PCONT_COMP.CONTA_CONTABIL AS CONTA_DEBITO,
+      PCONT_BCO.CONTA_CONTABIL AS CONTA_CREDITO,
+      TAB_BANCO_CC.COD_HISTORICO_PAGAR AS COD_HISTORICO,
+      COALESCE(TAB_FLUXO_LOTE.NUM_DOCTO_PGTO, '') AS NUM_DOCTO_PGTO,
+      TAB_FLUXO_LOTE.VAL_BRUTO,
+      1 AS FLG_AUTO,
+      3 AS TIPO_OPERACAO, /*PAGAMENTO*/
+      TAB_BANCO_CC.COD_CONTA_PAG_COMP COD_CONTA_DEB,
+      TAB_BANCO_CC.COD_CONTA AS COD_CONTA_CRED,
+      TAB_FLUXO_LOTE.COD_CHAVE_CTB AS COD_CHAVE_CTB,
+      TAB_FLUXO_LOTE.COD_CHAVE_FLUXO AS COD_CHAVE_FIN,
+      COALESCE(TAB_FLUXO_LOTE.NUM_DOCTO_PGTO, '') AS NUM_DOCTO_TITULO,
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO,
+      CASE WHEN (TAB_ENTIDADE.NUM_TIPO = 2) THEN
+        'S'
+      ELSE
+        'N'
+      END AS FLG_CHEQUE,
+      TAB_MOV_BCO.FLG_ESTORNO,
+      TAB_MOV_BCO.DTA_ORDENADA
+    FROM
+      TAB_FLUXO_LOTE
+
+    INNER JOIN TAB_MOV_BCO on
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_MOV_BCO.COD_CHAVE
+
+    INNER JOIN TAB_BANCO_CC ON
+      (TAB_FLUXO_LOTE.COD_BANCO_PGTO = TAB_BANCO_CC.COD_BANCO
+       AND
+       TAB_FLUXO_LOTE.DES_CC = TAB_BANCO_CC.DES_CC)
+
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+
+    LEFT JOIN TAB_PLANO_CONTA PCONT_BCO ON
+      TAB_BANCO_CC.COD_CONTA = PCONT_BCO.COD_CONTA
+
+    LEFT JOIN TAB_PLANO_CONTA PCONT_COMP ON
+      TAB_BANCO_CC.COD_CONTA_PAG_COMP = PCONT_COMP.COD_CONTA
+    WHERE
+      TAB_BANCO_CC.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_MOV_BCO.DTA_ORDENADA BETWEEN :PAR_DTA_INICIO AND :PAR_DTA_FINAL
+      /*AND
+      TAB_MOV_BCO.FLG_ESTORNO = 'S' */
+      AND
+      TAB_MOV_BCO.FLG_FLUXO = 'S'
+      AND
+      TAB_FLUXO_LOTE.FLG_CONFERIDO_CTB = 'N'
+      AND
+      TAB_FLUXO_LOTE.TIPO_CONTA = 0 /*PAGAMENTO*/
+      /*AND
+      TAB_ENTIDADE.NUM_TIPO = 2*/ /*CHEQUE*/
+      AND
+      TAB_BANCO_CC.TIPO_CONTA = 0 /*CONTA CORRENTE*/
+      AND
+      TAB_MOV_BCO.TIPO_SITUACAO = 1 /*COMPENSADO*/
+    ORDER BY
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO)
+    GROUP BY
+      COD_LOJA,
+      DTA_LANCAMENTO,
+      CONTA_DEBITO,
+      CONTA_CREDITO,
+      COD_HISTORICO,
+      NUM_DOCTO_PGTO,
+      FLG_AUTO,
+      TIPO_OPERACAO,
+      COD_CONTA_DEB,
+      COD_CONTA_CRED,
+      NUM_DOCTO_TITULO,
+      COD_CHAVE_MOVBCO,
+      FLG_CHEQUE,
+      FLG_ESTORNO,
+      DTA_ORDENADA
+    ORDER BY
+      COD_CHAVE_MOVBCO
+  into
+      :v_COD_LOJA_CC,
+      :v_DTA_LANCAMENTO,
+      :v_CONTA_DEBITO,
+      :v_CONTA_CREDITO,
+      :v_COD_HISTORICO,
+      :v_NUM_DOCTO,
+      :v_VALOR,
+      :v_FLG_AUTO,
+      :v_TIPO_OPERACAO,
+      :v_COD_CONTA_DEB,
+      :v_COD_CONTA_CRED,
+      :v_COD_CHAVE_CTB,
+      :v_COD_CHAVE_FIN,
+      :v_NUM_DOCTO_TITULO,
+      :v_COD_CHAVE_MOVBCO,
+      :v_FLG_CHEQUE,
+      :v_FLG_ESTORNO,
+      :v_DTA_ORDENADA
+
+  do
+  begin
+     v_DTA_LANCAMENTO = :v_DTA_ORDENADA;
+
+     if (EXTRACT(MONTH FROM v_DTA_LANCAMENTO) < 10) then
+       v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || '0' || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+     else    
+       v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+
+     execute procedure STP_HISTORICO_PADRAO(:v_COD_HISTORICO, :v_COD_CONTA_CRED, 2,
+     0, 0, NULL,
+     :v_NUM_DOCTO_TITULO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO, ' ')
+     returning_values(:v_COMPLEMENTO);
+
+     v_COD_LOTE_LANCTO = GEN_ID(GEN_COD_LOTE_LANCTO, 1);
+
+     if (v_FLG_CHEQUE = 'N') then
+     begin
+       v_COD_CONTA_DEB = :v_COD_CONTA_COMPENS;
+       v_CONTA_DEBITO = :v_CONTA_CONTABIL_COMPENS;
+     end
+
+     SELECT
+       COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+     FROM
+       TAB_FLUXO_LOTE_EVENTO
+     INNER JOIN TAB_FLUXO_LOTE ON
+      (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       AND
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+     INNER JOIN TAB_EVENTO_FINANCEIRO ON
+       TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+     INNER JOIN TAB_ENTIDADE ON
+       TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+     WHERE
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+       AND
+       TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*SOMENTE EVENTOS DEDUTIVOS*/
+       AND
+       TAB_ENTIDADE.NUM_TIPO = 2 /*CHEQUE*/
+    into
+      :v_VAL_TOT_DED_CHEQUE;
+
+     SELECT
+       COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+     FROM
+       TAB_FLUXO_LOTE_EVENTO
+     INNER JOIN TAB_FLUXO_LOTE ON
+      (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       AND
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+     INNER JOIN TAB_EVENTO_FINANCEIRO ON
+       TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+     INNER JOIN TAB_ENTIDADE ON
+       TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+     WHERE
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+       AND
+       TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*SOMENTE EVENTOS DEDUTIVOS*/
+       AND
+       TAB_ENTIDADE.NUM_TIPO <> 2 /*CHEQUE*/
+    into
+      :v_VAL_TOT_DED_N_CHEQUE;
+
+
+     SELECT
+       COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+     FROM
+       TAB_FLUXO_LOTE_EVENTO
+     INNER JOIN TAB_FLUXO_LOTE ON
+      (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       AND
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+     INNER JOIN TAB_EVENTO_FINANCEIRO ON
+       TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+     INNER JOIN TAB_ENTIDADE ON
+       TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+     WHERE
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+       AND
+       TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 0 /*SOMENTE EVENTOS ACRESCIMO*/
+       AND
+       TAB_ENTIDADE.NUM_TIPO = 2 /*CHEQUE*/
+    into
+      :v_VAL_TOT_ACRES_CHEQUE;
+
+     SELECT
+       COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+     FROM
+       TAB_FLUXO_LOTE_EVENTO
+     INNER JOIN TAB_FLUXO_LOTE ON
+      (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       AND
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+     INNER JOIN TAB_EVENTO_FINANCEIRO ON
+       TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+     INNER JOIN TAB_ENTIDADE ON
+       TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+     WHERE
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+       AND
+       TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 0 /*SOMENTE EVENTOS ACRESCIMO*/
+       AND
+       TAB_ENTIDADE.NUM_TIPO <> 2 /*CHEQUE*/
+    into
+      :v_VAL_TOT_ACRES_N_CHEQUE;
+
+    if (v_FLG_CHEQUE = 'S') then
+      v_VALOR = v_VALOR + v_VAL_TOT_ACRES_CHEQUE - v_VAL_TOT_DED_CHEQUE;
+    else
+      v_VALOR = v_VALOR + v_VAL_TOT_ACRES_N_CHEQUE - v_VAL_TOT_DED_N_CHEQUE;
+
+
+    SELECT
+      COUNT(*)
+    FROM
+      TAB_FLUXO_LOTE
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA <> :v_COD_LOJA_CC
+    into
+      :v_QTD_LOJAS_DIF_CC;
+
+     if (((v_QTD_LOJAS_DIF_CC > 0) and (v_COD_CONTA_COMPENS is not null) and (v_FLG_ESTORNO = 'N')) or
+        ((v_QTD_LOJAS_DIF_CC = 0) and (v_FLG_CHEQUE = 'S') and (v_FLG_ESTORNO = 'N')))
+     then
+     if ((v_COD_CONTA_DEB is not null) and (v_COD_CONTA_CRED is not null)) then
+     INSERT INTO TAB_DIARIO (
+           COD_LOTE_LANCTO,
+           COD_LOJA,
+           ANO_MES,
+           DTA_LANCAMENTO,
+           CONTA_CREDITO,
+           CONTA_DEBITO,
+           COD_HISTORICO,
+           NUM_DOCTO,
+           VALOR,
+           FLG_AUTO,
+           TIPO_OPERACAO,
+           COD_CONTA_DEB,
+           COD_CONTA_CRED,
+           COD_CHAVE_CTB,
+           COD_CHAVE_FIN,
+           COMPLEMENTO,
+           COD_CHAVE_MOV_CTA)
+     VALUES (
+           :v_COD_LOTE_LANCTO,
+           :v_COD_LOJA_CC,
+           :v_ANO_MES,
+           :v_DTA_LANCAMENTO,
+           :v_CONTA_CREDITO,
+           :v_CONTA_DEBITO,
+           :v_COD_HISTORICO,
+           :v_NUM_DOCTO,
+           :v_VALOR,
+           :v_FLG_AUTO,
+           :v_TIPO_OPERACAO,
+           :v_COD_CONTA_DEB,
+           :v_COD_CONTA_CRED,
+           :v_COD_CHAVE_CTB,
+           :v_COD_CHAVE_FIN,
+           :v_COMPLEMENTO,
+           :v_COD_CHAVE_MOVBCO);
+
+
+     if ((v_FLG_ESTORNO = 'S') and (v_COD_CHAVE_MOVBCO <> coalesce(v_COD_CHAVE_MOVBCO_OLD, 0)))  then
+     begin
+       for
+         SELECT
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO,
+           TAB_FLUXO_LOTE.COD_CHAVE_FLUXO,
+           TAB_FLUXO_LOTE.VAL_BRUTO,
+           TAB_FLUXO_LOTE.COD_CHAVE_CTB,
+           COALESCE(TAB_FLUXO_LOTE.NUM_DOCTO, '') AS NUM_DOCTO,
+           COALESCE(TAB_FLUXO_LOTE.NUM_DOCTO_PGTO, '') AS NUM_DOCTO_PGTO,
+           TAB_ENTIDADE.NUM_TIPO,
+           TAB_BANCO_CC.COD_CONTA AS COD_CONTA_BANCO,
+           PCONT_BCO.CONTA_CONTABIL AS CONTA_BANCO,
+           TAB_BANCO_CC.COD_CONTA_PAG_COMP,
+           PCONT_PAG_COMP.CONTA_CONTABIL AS CONTA_CHEQUE
+         FROM
+           TAB_FLUXO_LOTE
+         INNER JOIN TAB_ENTIDADE ON
+           TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+         INNER JOIN TAB_BANCO_CC ON
+           (TAB_FLUXO_LOTE.COD_BANCO_PGTO = TAB_BANCO_CC.COD_BANCO
+            AND
+            TAB_FLUXO_LOTE.DES_CC = TAB_BANCO_CC.DES_CC)
+         LEFT JOIN TAB_PLANO_CONTA PCONT_BCO ON
+           TAB_BANCO_CC.COD_CONTA = PCONT_BCO.COD_CONTA
+         LEFT JOIN TAB_PLANO_CONTA PCONT_PAG_COMP ON
+           TAB_BANCO_CC.COD_CONTA_PAG_COMP = PCONT_PAG_COMP.COD_CONTA
+         WHERE
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+           AND
+           TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+           /*AND
+           TAB_ENTIDADE.NUM_TIPO = 2*/ /*CHEQUE*/
+         ORDER BY
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       into
+         :v_COD_CHAVE_MOVBCO,
+         :v_COD_CHAVE_FLUXO,
+         :v_VALOR,
+         :v_COD_CHAVE_CTB,
+         :v_NUM_DOCTO_TITULO,
+         :v_NUM_DOCTO,
+         :v_NUM_TIPO,
+         :v_COD_CONTA_BANCO,
+         :v_CONTA_BANCO,
+         :v_COD_CONTA_CHEQUE,
+         :v_CONTA_CHEQUE
+       do
+       begin
+        for
+         SELECT FIRST 1
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+         FROM
+           TAB_FLUXO_LOTE
+         INNER JOIN TAB_MOV_BCO on
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_MOV_BCO.COD_CHAVE
+         WHERE
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO < :v_COD_CHAVE_MOVBCO
+           AND
+           TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+           AND
+           TAB_FLUXO_LOTE.COD_CHAVE_FLUXO = :v_COD_CHAVE_FLUXO
+           AND
+           TAB_MOV_BCO.TIPO_SITUACAO = 1 /*COMPENSADO*/
+         ORDER BY
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO DESC
+        into
+          :v_COD_CHAVE_MOVBCO_ORIGEM
+        do
+        begin
+          SELECT
+            COUNT(*)
+          FROM
+            TAB_FLUXO_LOTE
+          WHERE
+            TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO_ORIGEM
+            AND
+            TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+            AND
+            TAB_FLUXO_LOTE.COD_LOJA <> :v_COD_LOJA_CC
+          into
+            :v_QTD_LOJAS_DIF_CC;
+
+          if (((v_QTD_LOJAS_DIF_CC > 0) and (v_COD_CONTA_COMPENS is not null)) or
+             ((v_QTD_LOJAS_DIF_CC = 0) and (v_NUM_TIPO = 2))) then
+          begin
+            /*SE NAO FOR ENTIDADE CHEQUE*/
+            if (v_NUM_TIPO <> 2) then
+            begin
+               /*CREDITA A TRANSITORIA E DEBITA O BANCO*/
+               v_COD_CONTA_DEB = v_COD_CONTA_BANCO;
+               v_CONTA_DEBITO = v_CONTA_BANCO;
+
+               v_COD_CONTA_CRED = :v_COD_CONTA_COMPENS;
+               v_CONTA_CREDITO = :v_CONTA_CONTABIL_COMPENS;
+            end
+
+            /*SE FOR ENTIDADE CHEQUE*/
+            if (v_NUM_TIPO = 2) then
+            begin
+               /*CREDITA CHEQUES A COMPENSAR E DEBITA O BANCO*/
+               v_COD_CONTA_DEB = v_COD_CONTA_BANCO;
+               v_CONTA_DEBITO = v_CONTA_BANCO;
+
+               v_COD_CONTA_CRED = :v_COD_CONTA_CHEQUE;
+               v_CONTA_CREDITO = :v_CONTA_CHEQUE;
+            end
+
+            v_DTA_LANCAMENTO = :v_DTA_ORDENADA;
+            v_COD_LOTE_LANCTO = GEN_ID(GEN_COD_LOTE_LANCTO, 1);
+
+            if (EXTRACT(MONTH FROM v_DTA_LANCAMENTO) < 10) then
+              v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || '0' || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+            else
+              v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+            
+            execute procedure STP_HISTORICO_PADRAO(:v_COD_HISTORICO, :v_COD_CONTA_CRED, 2,
+            0, 0, NULL,
+            :v_NUM_DOCTO_TITULO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO, ' ')
+            returning_values(:v_COMPLEMENTO);
+
+            v_COMPLEMENTO = '(ESTORNO) ' || v_COMPLEMENTO;
+
+            SELECT
+               COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+            FROM
+               TAB_FLUXO_LOTE_EVENTO
+            INNER JOIN TAB_FLUXO_LOTE ON
+              (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+               AND
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+            INNER JOIN TAB_EVENTO_FINANCEIRO ON
+               TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+            INNER JOIN TAB_ENTIDADE ON
+               TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+            WHERE
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+               AND
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = :v_COD_CHAVE_FLUXO
+               AND
+               TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*SOMENTE EVENTOS DEDUTIVOS*/
+            into
+              :v_VAL_TOT_DED_CHEQUE;
+        
+            SELECT
+               COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+            FROM
+               TAB_FLUXO_LOTE_EVENTO
+            INNER JOIN TAB_FLUXO_LOTE ON
+              (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+               AND
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+            INNER JOIN TAB_EVENTO_FINANCEIRO ON
+               TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+            INNER JOIN TAB_ENTIDADE ON
+               TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+            WHERE
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+               AND
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = :v_COD_CHAVE_FLUXO
+               AND
+               TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 0 /*SOMENTE EVENTOS ACRESCIMO*/
+            into
+              :v_VAL_TOT_ACRES_CHEQUE;
+        
+            v_VALOR = v_VALOR + v_VAL_TOT_ACRES_CHEQUE - v_VAL_TOT_DED_CHEQUE;
+
+            if ((v_COD_CONTA_DEB is not null) and (v_COD_CONTA_CRED is not null)) then
+            INSERT INTO TAB_DIARIO
+                   (COD_LOTE_LANCTO,
+                    COD_LOJA,
+                    ANO_MES,
+                    DTA_LANCAMENTO,
+                    CONTA_CREDITO,
+                    CONTA_DEBITO,
+                    COD_HISTORICO,
+                    NUM_DOCTO,
+                    VALOR,
+                    FLG_AUTO,
+                    TIPO_OPERACAO,
+                    COD_CONTA_DEB,
+                    COD_CONTA_CRED,
+                    COD_CHAVE_CTB,
+                    COD_CHAVE_FIN,
+                    COMPLEMENTO,
+                    COD_CHAVE_MOV_CTA)
+             VALUES
+                   (:v_COD_LOTE_LANCTO,
+                    :v_COD_LOJA_CC,
+                    :v_ANO_MES,
+                    :v_DTA_LANCAMENTO,
+                    :v_CONTA_CREDITO,
+                    :v_CONTA_DEBITO,
+                    :v_COD_HISTORICO,
+                    :v_NUM_DOCTO,
+                    :v_VALOR,
+                    :v_FLG_AUTO,
+                    :v_TIPO_OPERACAO,
+                    :v_COD_CONTA_DEB,
+                    :v_COD_CONTA_CRED,
+                    :v_COD_CHAVE_CTB,
+                    :v_COD_CHAVE_FIN,
+                    :v_COMPLEMENTO,
+                    :v_COD_CHAVE_MOVBCO);
+          end
+        end
+       end
+     end
+     v_COD_CHAVE_MOVBCO_OLD = v_COD_CHAVE_MOVBCO;
+  end
+
+  /*SE MARCAR TODOS OU RECEBIMENTOS*/
+  if ((PAR_TIPO_LANCTO = 0) or (PAR_TIPO_LANCTO = 3)) then
+  for
+    SELECT
+      COD_LOJA AS COD_LOJA_CC ,
+      DTA_LANCAMENTO,
+      CONTA_DEBITO,
+      CONTA_CREDITO,
+      COD_HISTORICO,
+      NUM_DOCTO_PGTO,
+      SUM(VAL_BRUTO) AS VAL_BRUTO,
+      FLG_AUTO,
+      TIPO_OPERACAO,
+      COD_CONTA_DEB,
+      COD_CONTA_CRED,
+      MAX(COD_CHAVE_CTB) AS COD_CHAVE_CTB,
+      MAX(COD_CHAVE_FIN) AS COD_CHAVE_FIN,
+      NUM_DOCTO_TITULO,
+      COD_CHAVE_MOVBCO,
+      FLG_CHEQUE,
+      FLG_ESTORNO,
+      DTA_ORDENADA
+    FROM
+    (
+    SELECT
+      TAB_BANCO_CC.COD_LOJA,
+      TAB_FLUXO_LOTE.DTA_COMPENSACAO AS DTA_LANCAMENTO,
+      PCONT_COMP.CONTA_CONTABIL AS CONTA_DEBITO,
+      PCONT_BCO.CONTA_CONTABIL AS CONTA_CREDITO,
+      TAB_BANCO_CC.COD_HISTORICO_RECEBER AS COD_HISTORICO,
+      COALESCE(TAB_FLUXO_LOTE.NUM_DOCTO_PGTO, '') AS NUM_DOCTO_PGTO,
+      TAB_FLUXO_LOTE.VAL_BRUTO,
+      1 AS FLG_AUTO,
+      2 AS TIPO_OPERACAO, /*RECEBIMENTO*/
+      TAB_BANCO_CC.COD_CONTA_REC_COMP COD_CONTA_DEB,
+      TAB_BANCO_CC.COD_CONTA AS COD_CONTA_CRED,
+      TAB_FLUXO_LOTE.COD_CHAVE_CTB AS COD_CHAVE_CTB,
+      TAB_FLUXO_LOTE.COD_CHAVE_FLUXO AS COD_CHAVE_FIN,
+      COALESCE(TAB_FLUXO_LOTE.NUM_DOCTO_PGTO, '') AS NUM_DOCTO_TITULO,
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO,
+      CASE WHEN (TAB_ENTIDADE.NUM_TIPO = 2) THEN
+        'S'
+      ELSE
+        'N'
+      END AS FLG_CHEQUE,
+      TAB_MOV_BCO.FLG_ESTORNO,
+      TAB_MOV_BCO.DTA_ORDENADA
+    FROM
+      TAB_FLUXO_LOTE
+
+    INNER JOIN TAB_MOV_BCO on
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_MOV_BCO.COD_CHAVE
+
+    INNER JOIN TAB_BANCO_CC ON
+      (TAB_FLUXO_LOTE.COD_BANCO_PGTO = TAB_BANCO_CC.COD_BANCO
+       AND
+       TAB_FLUXO_LOTE.DES_CC = TAB_BANCO_CC.DES_CC)
+
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+
+    LEFT JOIN TAB_PLANO_CONTA PCONT_BCO ON
+      TAB_BANCO_CC.COD_CONTA = PCONT_BCO.COD_CONTA
+
+    LEFT JOIN TAB_PLANO_CONTA PCONT_COMP ON
+      TAB_BANCO_CC.COD_CONTA_REC_COMP = PCONT_COMP.COD_CONTA
+    WHERE
+      TAB_BANCO_CC.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_MOV_BCO.DTA_ORDENADA BETWEEN :PAR_DTA_INICIO AND :PAR_DTA_FINAL
+      /*AND
+      TAB_MOV_BCO.FLG_ESTORNO = 'S' */
+      AND
+      TAB_MOV_BCO.FLG_FLUXO = 'S'
+      AND
+      TAB_FLUXO_LOTE.FLG_CONFERIDO_CTB = 'N'
+      AND
+      TAB_FLUXO_LOTE.TIPO_CONTA = 1 /*RECEBIMENTO*/
+      /*AND
+      TAB_ENTIDADE.NUM_TIPO = 2*/ /*CHEQUE*/
+      AND
+      TAB_BANCO_CC.TIPO_CONTA = 0 /*CONTA CORRENTE*/
+      AND
+      TAB_MOV_BCO.TIPO_SITUACAO = 1 /*COMPENSADO*/
+    ORDER BY
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO)
+    GROUP BY
+      COD_LOJA,
+      DTA_LANCAMENTO,
+      CONTA_DEBITO,
+      CONTA_CREDITO,
+      COD_HISTORICO,
+      NUM_DOCTO_PGTO,
+      FLG_AUTO,
+      TIPO_OPERACAO,
+      COD_CONTA_DEB,
+      COD_CONTA_CRED,
+      NUM_DOCTO_TITULO,
+      COD_CHAVE_MOVBCO,
+      FLG_CHEQUE,
+      FLG_ESTORNO,
+      DTA_ORDENADA
+    ORDER BY
+      COD_CHAVE_MOVBCO
+  into
+      :v_COD_LOJA_CC,
+      :v_DTA_LANCAMENTO,
+      :v_CONTA_DEBITO,
+      :v_CONTA_CREDITO,
+      :v_COD_HISTORICO,
+      :v_NUM_DOCTO,
+      :v_VALOR,
+      :v_FLG_AUTO,
+      :v_TIPO_OPERACAO,
+      :v_COD_CONTA_DEB,
+      :v_COD_CONTA_CRED,
+      :v_COD_CHAVE_CTB,
+      :v_COD_CHAVE_FIN,
+      :v_NUM_DOCTO_TITULO,
+      :v_COD_CHAVE_MOVBCO,
+      :v_FLG_CHEQUE,
+      :v_FLG_ESTORNO,
+      :v_DTA_ORDENADA
+
+  do
+  begin
+     v_DTA_LANCAMENTO = :v_DTA_ORDENADA;
+
+     if (EXTRACT(MONTH FROM v_DTA_LANCAMENTO) < 10) then
+       v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || '0' || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+     else    
+       v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+
+     execute procedure STP_HISTORICO_PADRAO(:v_COD_HISTORICO, :v_COD_CONTA_DEB, 2,
+     0, 0, NULL,
+     :v_NUM_DOCTO_TITULO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO, ' ')
+     returning_values(:v_COMPLEMENTO);
+
+     v_COD_LOTE_LANCTO = GEN_ID(GEN_COD_LOTE_LANCTO, 1);
+
+     if (v_FLG_CHEQUE = 'N') then
+     begin
+       /*DEBITA O BANCO E CREDITA A TRANSITORIA */
+       v_COD_CONTA_DEB = :v_COD_CONTA_CRED;
+       v_CONTA_DEBITO = :v_CONTA_CREDITO;
+
+       v_COD_CONTA_CRED = :v_COD_CONTA_COMPENS;
+       v_CONTA_CREDITO = :v_CONTA_CONTABIL_COMPENS;
+     end
+
+     if (v_FLG_CHEQUE = 'S') then
+     begin
+       v_COD_CONTA_CHEQUE = :v_COD_CONTA_DEB;
+       v_CONTA_CHEQUE = :v_CONTA_DEBITO;
+
+       /*DEBITA O BANCO E CREDITA CHEQUES A COMPENSAR */
+       v_COD_CONTA_DEB = :v_COD_CONTA_CRED;
+       v_CONTA_DEBITO = :v_CONTA_CREDITO;
+
+       v_COD_CONTA_CRED = :v_COD_CONTA_CHEQUE;
+       v_CONTA_CREDITO = :v_CONTA_CHEQUE;
+     end
+
+     SELECT
+       COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+     FROM
+       TAB_FLUXO_LOTE_EVENTO
+     INNER JOIN TAB_FLUXO_LOTE ON
+      (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       AND
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+     INNER JOIN TAB_EVENTO_FINANCEIRO ON
+       TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+     INNER JOIN TAB_ENTIDADE ON
+       TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+     WHERE
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+       AND
+       TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*SOMENTE EVENTOS DEDUTIVOS*/
+       AND
+       TAB_ENTIDADE.NUM_TIPO = 2 /*CHEQUE*/
+    into
+      :v_VAL_TOT_DED_CHEQUE;
+
+     SELECT
+       COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+     FROM
+       TAB_FLUXO_LOTE_EVENTO
+     INNER JOIN TAB_FLUXO_LOTE ON
+      (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       AND
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+     INNER JOIN TAB_EVENTO_FINANCEIRO ON
+       TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+     INNER JOIN TAB_ENTIDADE ON
+       TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+     WHERE
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+       AND
+       TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*SOMENTE EVENTOS DEDUTIVOS*/
+       AND
+       TAB_ENTIDADE.NUM_TIPO <> 2 /*CHEQUE*/
+    into
+      :v_VAL_TOT_DED_N_CHEQUE;
+
+
+     SELECT
+       COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+     FROM
+       TAB_FLUXO_LOTE_EVENTO
+     INNER JOIN TAB_FLUXO_LOTE ON
+      (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       AND
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+     INNER JOIN TAB_EVENTO_FINANCEIRO ON
+       TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+     INNER JOIN TAB_ENTIDADE ON
+       TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+     WHERE
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+       AND
+       TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 0 /*SOMENTE EVENTOS ACRESCIMO*/
+       AND
+       TAB_ENTIDADE.NUM_TIPO = 2 /*CHEQUE*/
+    into
+      :v_VAL_TOT_ACRES_CHEQUE;
+
+     SELECT
+       COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+     FROM
+       TAB_FLUXO_LOTE_EVENTO
+     INNER JOIN TAB_FLUXO_LOTE ON
+      (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       AND
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+     INNER JOIN TAB_EVENTO_FINANCEIRO ON
+       TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+     INNER JOIN TAB_ENTIDADE ON
+       TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+     WHERE
+       TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+       AND
+       TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 0 /*SOMENTE EVENTOS ACRESCIMO*/
+       AND
+       TAB_ENTIDADE.NUM_TIPO <> 2 /*CHEQUE*/
+    into
+      :v_VAL_TOT_ACRES_N_CHEQUE;
+
+    if (v_FLG_CHEQUE = 'S') then
+      v_VALOR = v_VALOR + v_VAL_TOT_ACRES_CHEQUE - v_VAL_TOT_DED_CHEQUE;
+    else
+      v_VALOR = v_VALOR + v_VAL_TOT_ACRES_N_CHEQUE - v_VAL_TOT_DED_N_CHEQUE;
+
+
+    SELECT
+      COUNT(*)
+    FROM
+      TAB_FLUXO_LOTE
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA <> :v_COD_LOJA_CC
+    into
+      :v_QTD_LOJAS_DIF_CC;
+
+     if (((v_QTD_LOJAS_DIF_CC > 0) and (v_COD_CONTA_COMPENS is not null) and (v_FLG_ESTORNO = 'N')) or
+        ((v_QTD_LOJAS_DIF_CC = 0) and (v_FLG_CHEQUE = 'S') and (v_FLG_ESTORNO = 'N')))
+     then
+     if ((v_COD_CONTA_DEB is not null) and (v_COD_CONTA_CRED is not null)) then
+     INSERT INTO TAB_DIARIO (
+           COD_LOTE_LANCTO,
+           COD_LOJA,
+           ANO_MES,
+           DTA_LANCAMENTO,
+           CONTA_CREDITO,
+           CONTA_DEBITO,
+           COD_HISTORICO,
+           NUM_DOCTO,
+           VALOR,
+           FLG_AUTO,
+           TIPO_OPERACAO,
+           COD_CONTA_DEB,
+           COD_CONTA_CRED,
+           COD_CHAVE_CTB,
+           COD_CHAVE_FIN,
+           COMPLEMENTO,
+           COD_CHAVE_MOV_CTA)
+     VALUES (
+           :v_COD_LOTE_LANCTO,
+           :v_COD_LOJA_CC,
+           :v_ANO_MES,
+           :v_DTA_LANCAMENTO,
+           :v_CONTA_CREDITO,
+           :v_CONTA_DEBITO,
+           :v_COD_HISTORICO,
+           :v_NUM_DOCTO,
+           :v_VALOR,
+           :v_FLG_AUTO,
+           :v_TIPO_OPERACAO,
+           :v_COD_CONTA_DEB,
+           :v_COD_CONTA_CRED,
+           :v_COD_CHAVE_CTB,
+           :v_COD_CHAVE_FIN,
+           :v_COMPLEMENTO,
+           :v_COD_CHAVE_MOVBCO);
+
+
+     if ((v_FLG_ESTORNO = 'S') and (v_COD_CHAVE_MOVBCO <> coalesce(v_COD_CHAVE_MOVBCO_OLD, 0)))  then
+     begin
+       for
+         SELECT
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO,
+           TAB_FLUXO_LOTE.COD_CHAVE_FLUXO,
+           TAB_FLUXO_LOTE.VAL_BRUTO,
+           TAB_FLUXO_LOTE.COD_CHAVE_CTB,
+           COALESCE(TAB_FLUXO_LOTE.NUM_DOCTO, '') AS NUM_DOCTO,
+           COALESCE(TAB_FLUXO_LOTE.NUM_DOCTO_PGTO, '') AS NUM_DOCTO_PGTO,
+           TAB_ENTIDADE.NUM_TIPO,
+           TAB_BANCO_CC.COD_CONTA AS COD_CONTA_BANCO,
+           PCONT_BCO.CONTA_CONTABIL AS CONTA_BANCO,
+           TAB_BANCO_CC.COD_CONTA_REC_COMP,
+           PCONT_PAG_COMP.CONTA_CONTABIL AS CONTA_CHEQUE
+         FROM
+           TAB_FLUXO_LOTE
+         INNER JOIN TAB_ENTIDADE ON
+           TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+         INNER JOIN TAB_BANCO_CC ON
+           (TAB_FLUXO_LOTE.COD_BANCO_PGTO = TAB_BANCO_CC.COD_BANCO
+            AND
+            TAB_FLUXO_LOTE.DES_CC = TAB_BANCO_CC.DES_CC)
+         LEFT JOIN TAB_PLANO_CONTA PCONT_BCO ON
+           TAB_BANCO_CC.COD_CONTA = PCONT_BCO.COD_CONTA
+         LEFT JOIN TAB_PLANO_CONTA PCONT_PAG_COMP ON
+           TAB_BANCO_CC.COD_CONTA_REC_COMP = PCONT_PAG_COMP.COD_CONTA
+         WHERE
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+           AND
+           TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+           /*AND
+           TAB_ENTIDADE.NUM_TIPO = 2*/ /*CHEQUE*/
+         ORDER BY
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+       into
+         :v_COD_CHAVE_MOVBCO,
+         :v_COD_CHAVE_FLUXO,
+         :v_VALOR,
+         :v_COD_CHAVE_CTB,
+         :v_NUM_DOCTO_TITULO,
+         :v_NUM_DOCTO,
+         :v_NUM_TIPO,
+         :v_COD_CONTA_BANCO,
+         :v_CONTA_BANCO,
+         :v_COD_CONTA_CHEQUE,
+         :v_CONTA_CHEQUE
+       do
+       begin
+
+        for
+         SELECT FIRST 1
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+         FROM
+           TAB_FLUXO_LOTE
+         INNER JOIN TAB_MOV_BCO on
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_MOV_BCO.COD_CHAVE
+         WHERE
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO < :v_COD_CHAVE_MOVBCO
+           AND
+           TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+           AND
+           TAB_FLUXO_LOTE.COD_CHAVE_FLUXO = :v_COD_CHAVE_FLUXO
+           AND
+           TAB_MOV_BCO.TIPO_SITUACAO = 1 /*COMPENSADO*/
+         ORDER BY
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO DESC
+        into
+          :v_COD_CHAVE_MOVBCO_ORIGEM
+        do
+        begin
+          SELECT
+            COUNT(*)
+          FROM
+            TAB_FLUXO_LOTE
+          WHERE
+            TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO_ORIGEM
+            AND
+            TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+            AND
+            TAB_FLUXO_LOTE.COD_LOJA <> :v_COD_LOJA_CC
+          into
+            :v_QTD_LOJAS_DIF_CC;
+
+          if (((v_QTD_LOJAS_DIF_CC > 0) and (v_COD_CONTA_COMPENS is not null)) or
+             ((v_QTD_LOJAS_DIF_CC = 0) and (v_NUM_TIPO = 2))) then
+          begin
+            /*SE NAO FOR ENTIDADE CHEQUE*/
+            if (v_NUM_TIPO <> 2) then
+            begin
+               /*DEBITA A TRANSITORIA E CREDITA O BANCO*/
+               v_COD_CONTA_DEB = v_COD_CONTA_COMPENS;
+               v_CONTA_DEBITO = v_CONTA_CONTABIL_COMPENS;
+
+               v_COD_CONTA_CRED = :v_COD_CONTA_BANCO;
+               v_CONTA_CREDITO = :v_CONTA_BANCO;
+            end
+
+            /*SE FOR ENTIDADE CHEQUE*/
+            if (v_NUM_TIPO = 2) then
+            begin
+               /*DEBITA CHEQUES A COMPENSAR E CREDITA O BANCO*/
+               v_COD_CONTA_DEB = :v_COD_CONTA_CHEQUE;
+               v_CONTA_DEBITO = :v_CONTA_CHEQUE;
+
+               v_COD_CONTA_CRED = :v_COD_CONTA_BANCO;
+               v_CONTA_CREDITO = :v_CONTA_BANCO;
+            end
+
+            v_DTA_LANCAMENTO = :v_DTA_ORDENADA;
+            v_COD_LOTE_LANCTO = GEN_ID(GEN_COD_LOTE_LANCTO, 1);
+
+            if (EXTRACT(MONTH FROM v_DTA_LANCAMENTO) < 10) then
+              v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || '0' || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+            else
+              v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+            
+            execute procedure STP_HISTORICO_PADRAO(:v_COD_HISTORICO, :v_COD_CONTA_CRED, 2,
+            0, 0, NULL,
+            :v_NUM_DOCTO_TITULO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO, ' ')
+            returning_values(:v_COMPLEMENTO);
+
+            v_COMPLEMENTO = '(ESTORNO) ' || v_COMPLEMENTO;
+
+            SELECT
+               COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+            FROM
+               TAB_FLUXO_LOTE_EVENTO
+            INNER JOIN TAB_FLUXO_LOTE ON
+              (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+               AND
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+            INNER JOIN TAB_EVENTO_FINANCEIRO ON
+               TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+            INNER JOIN TAB_ENTIDADE ON
+               TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+            WHERE
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+               AND
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = :v_COD_CHAVE_FLUXO
+               AND
+               TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*SOMENTE EVENTOS DEDUTIVOS*/
+            into
+              :v_VAL_TOT_DED_CHEQUE;
+        
+            SELECT
+               COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+            FROM
+               TAB_FLUXO_LOTE_EVENTO
+            INNER JOIN TAB_FLUXO_LOTE ON
+              (TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+               AND
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE.COD_CHAVE_FLUXO)
+            INNER JOIN TAB_EVENTO_FINANCEIRO ON
+               TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+            INNER JOIN TAB_ENTIDADE ON
+               TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+            WHERE
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :v_COD_CHAVE_MOVBCO
+               AND
+               TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = :v_COD_CHAVE_FLUXO
+               AND
+               TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 0 /*SOMENTE EVENTOS ACRESCIMO*/
+            into
+              :v_VAL_TOT_ACRES_CHEQUE;
+        
+            v_VALOR = v_VALOR + v_VAL_TOT_ACRES_CHEQUE - v_VAL_TOT_DED_CHEQUE;
+
+            if ((v_COD_CONTA_DEB is not null) and (v_COD_CONTA_CRED is not null)) then
+            INSERT INTO TAB_DIARIO
+                   (COD_LOTE_LANCTO,
+                    COD_LOJA,
+                    ANO_MES,
+                    DTA_LANCAMENTO,
+                    CONTA_CREDITO,
+                    CONTA_DEBITO,
+                    COD_HISTORICO,
+                    NUM_DOCTO,
+                    VALOR,
+                    FLG_AUTO,
+                    TIPO_OPERACAO,
+                    COD_CONTA_DEB,
+                    COD_CONTA_CRED,
+                    COD_CHAVE_CTB,
+                    COD_CHAVE_FIN,
+                    COMPLEMENTO,
+                    COD_CHAVE_MOV_CTA)
+             VALUES
+                   (:v_COD_LOTE_LANCTO,
+                    :v_COD_LOJA_CC,
+                    :v_ANO_MES,
+                    :v_DTA_LANCAMENTO,
+                    :v_CONTA_CREDITO,
+                    :v_CONTA_DEBITO,
+                    :v_COD_HISTORICO,
+                    :v_NUM_DOCTO,
+                    :v_VALOR,
+                    :v_FLG_AUTO,
+                    :v_TIPO_OPERACAO,
+                    :v_COD_CONTA_DEB,
+                    :v_COD_CONTA_CRED,
+                    :v_COD_CHAVE_CTB,
+                    :v_COD_CHAVE_FIN,
+                    :v_COMPLEMENTO,
+                    :v_COD_CHAVE_MOVBCO);
+          end
+        end
+       end
+     end
+     v_COD_CHAVE_MOVBCO_OLD = v_COD_CHAVE_MOVBCO;
+  end
+
+end^
+
+SET TERM ; ^
+
+GRANT SELECT ON TAB_PARAMETRO_EMPRESA TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT SELECT ON TAB_PLANO_CONTA TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT SELECT ON TAB_FLUXO_LOTE TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT SELECT ON TAB_MOV_BCO TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT SELECT ON TAB_BANCO_CC TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT SELECT ON TAB_ENTIDADE TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT EXECUTE ON PROCEDURE STP_HISTORICO_PADRAO TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT SELECT ON TAB_FLUXO_LOTE_EVENTO TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT SELECT ON TAB_EVENTO_FINANCEIRO TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT INSERT ON TAB_DIARIO TO PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS;
+
+GRANT EXECUTE ON PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS TO "PUBLIC";
+GRANT EXECUTE ON PROCEDURE STP_INSERE_DIARIO_FIN_COMPENS TO SYSDBA;

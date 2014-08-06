@@ -1,0 +1,769 @@
+SET TERM ^ ;
+
+CREATE OR ALTER PROCEDURE STP_PREVIA_LANCTO_CTB_FIN (
+    par_cod_loja integer,
+    par_tipo_conta integer,
+    par_tipo_parceiro integer,
+    par_cod_parceiro integer,
+    par_num_registro integer,
+    par_tipo_parceiro_ctb integer,
+    par_cod_parceiro_ctb integer,
+    par_cod_chave_movbco integer,
+    par_cod_chave_fluxo integer,
+    par_flg_estorno char(1))
+returns (
+    v_des_evento varchar(50),
+    v_conta_contabil_debito varchar(25),
+    v_conta_contabil_credito varchar(25),
+    v_valor double precision,
+    v_cod_conta_debito integer,
+    v_cod_conta_credito integer,
+    v_cod_historico integer,
+    v_des_historico varchar(500),
+    v_cod_conta_pgto integer,
+    v_cod_conta_rcbmto integer,
+    v_cod_historico_pagto integer,
+    v_cod_historico_recebto integer,
+    v_tipo_operacao integer,
+    v_cod_conta_compens integer,
+    v_cod_conta_pag_comp integer,
+    v_cod_conta_rec_comp integer)
+as
+declare variable v_cod_evento integer;
+declare variable v_val_evento double precision;
+declare variable v_val_tot_deducoes double precision;
+declare variable v_conta_contabil_bco varchar(25);
+declare variable v_tipo_conta integer;
+declare variable v_tipo_parceiro integer;
+declare variable v_cod_parceiro integer;
+declare variable v_cod_conta_parceiro integer;
+declare variable v_cod_conta_banco integer;
+declare variable v_conta_contabil_parceiro varchar(25);
+declare variable v_conta_contabil_pagto varchar(25);
+declare variable v_conta_contabil_recebto varchar(25);
+declare variable v_des_historico_pagto varchar(500);
+declare variable v_des_historico_recebto varchar(500);
+declare variable v_conta_contabil_pag_comp varchar(25);
+declare variable v_cod_historico_pag_comp integer;
+declare variable v_des_historico_pag_comp varchar(500);
+declare variable v_num_tipo integer;
+declare variable v_tipo_conta_cad integer;
+declare variable v_conta_contabil_rec_comp varchar(25);
+declare variable v_cod_historico_rec_comp integer;
+declare variable v_des_historico_rec_comp varchar(500);
+declare variable v_num_docto varchar(25);
+declare variable v_num_nf integer;
+declare variable v_num_serie_nf varchar(8);
+declare variable v_cod_conta_cred_ret integer;
+declare variable v_conta_credito_ret varchar(25);
+declare variable v_flg_depend_nf char(1);
+declare variable v_cod_chave_ctb integer;
+declare variable v_tipo_nf integer;
+declare variable v_tipo_operacao_nf integer;
+declare variable v_cod_conta_deb_id_dev integer;
+declare variable v_conta_contabil_deb_id_dev varchar(25);
+declare variable v_cod_conta_cred_id_ent integer;
+declare variable v_conta_contabil_cred_id_ent varchar(25);
+declare variable v_cod_loja_cc integer;
+declare variable v_cod_loja_flx integer;
+declare variable v_cod_historico_compens integer;
+declare variable v_conta_contabil_compens varchar(25);
+declare variable v_qtd_lojas_dif_cc integer;
+declare variable v_cod_chave_movbco integer;
+begin
+/* 
+STATUS: CHECK-IN
+DATA: 30/05/2014
+VERSAO: 5.7.7
+USUARIO: GUSTAVO SALA
+OS: 6929 - Melhorias no processo de Retencoes Tributarias
+*/
+
+    SELECT
+      COD_CONTA_COMPENS,
+      COD_HISTORICO_COMPENS,
+      TAB_PLANO_CONTA.CONTA_CONTABIL
+    FROM
+      TAB_PARAMETRO_EMPRESA
+    INNER JOIN TAB_PLANO_CONTA ON
+      TAB_PARAMETRO_EMPRESA.COD_CONTA_COMPENS = TAB_PLANO_CONTA.COD_CONTA
+    into
+      :v_COD_CONTA_COMPENS,
+      :v_COD_HISTORICO_COMPENS,
+      :v_CONTA_CONTABIL_COMPENS;
+
+    V_VAL_TOT_DEDUCOES = 0.00;
+
+    SELECT
+      COALESCE(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0) AS VAL_EVENTO
+    FROM
+      TAB_FLUXO_LOTE_EVENTO
+    INNER JOIN TAB_EVENTO_FINANCEIRO ON
+      TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+    WHERE
+      TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :PAR_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = :PAR_COD_CHAVE_FLUXO
+      AND
+      TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*SOMENTE EVENTOS DEDUTIVOS*/
+    into
+      :V_VAL_TOT_DEDUCOES;
+
+
+    if (PAR_COD_CHAVE_MOVBCO <> 0) then
+    SELECT
+      TAB_FLUXO_LOTE.VAL_BRUTO AS VAL_PARCELA,
+      TAB_FLUXO_LOTE.TIPO_CONTA,
+      TAB_FLUXO_LOTE.TIPO_PARCEIRO,
+      TAB_FLUXO_LOTE.COD_PARCEIRO,
+      TAB_PLANO_CONTA.CONTA_CONTABIL AS CONTA_CONTABIL_BCO,
+      TAB_BANCO_CC.COD_CONTA,
+      TAB_BANCO_CC.COD_HISTORICO_PAGAR,
+      TAB_BANCO_CC.COD_HISTORICO_RECEBER,
+      HIST_PAGTO.DES_HISTORICO_PADRAO AS DES_HISTORICO_PAGTO,
+      HIST_RECEBTO.DES_HISTORICO_PADRAO AS DES_HISTORICO_RECEBTO,
+      TAB_BANCO_CC.COD_CONTA_PAG_COMP,
+      PCONTA_PAG_COMP.CONTA_CONTABIL AS CONTA_CONTABIL_PAG_COMP,
+      TAB_BANCO_CC.COD_HISTORICO_PAG_COMP,
+      HIST_PAG_COMP.DES_HISTORICO_PADRAO AS DES_HISTORICO_PAG_COMP,
+      TAB_ENTIDADE.NUM_TIPO,
+      TAB_BANCO_CC.TIPO_CONTA AS TIPO_CONTA_CAD,
+      TAB_BANCO_CC.COD_CONTA_REC_COMP,
+      PCONTA_REC_COMP.CONTA_CONTABIL AS CONTA_CONTABIL_REC_COMP,
+      TAB_BANCO_CC.COD_HISTORICO_REC_COMP,
+      HIST_REC_COMP.DES_HISTORICO_PADRAO AS DES_HISTORICO_REC_COMP,
+      TAB_FLUXO_LOTE.NUM_DOCTO,
+      TAB_FLUXO_LOTE.NUM_NF,
+      TAB_FLUXO_LOTE.NUM_SERIE_NF,
+      TAB_FLUXO_LOTE.FLG_DEPEND_NF,
+      TAB_FLUXO_LOTE.COD_CHAVE_CTB,
+      TAB_BANCO_CC.COD_LOJA AS COD_LOJA_CC,
+      TAB_FLUXO_LOTE.COD_LOJA
+    FROM
+      TAB_FLUXO_LOTE
+    INNER JOIN TAB_BANCO_CC ON
+     (TAB_FLUXO_LOTE.COD_BANCO_PGTO = TAB_BANCO_CC.COD_BANCO
+      AND
+      TAB_FLUXO_LOTE.DES_CC = TAB_BANCO_CC.DES_CC)
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    LEFT JOIN TAB_PLANO_CONTA ON
+      TAB_BANCO_CC.COD_CONTA = TAB_PLANO_CONTA.COD_CONTA
+    LEFT JOIN TAB_HISTORICO_PADRAO HIST_PAGTO ON
+      TAB_BANCO_CC.COD_HISTORICO_PAGAR = HIST_PAGTO.COD_HISTORICO
+    LEFT JOIN TAB_HISTORICO_PADRAO HIST_RECEBTO ON
+      TAB_BANCO_CC.COD_HISTORICO_RECEBER = HIST_RECEBTO.COD_HISTORICO
+    LEFT JOIN TAB_PLANO_CONTA PCONTA_PAG_COMP ON
+      TAB_BANCO_CC.COD_CONTA_PAG_COMP = PCONTA_PAG_COMP.COD_CONTA
+    LEFT JOIN TAB_HISTORICO_PADRAO HIST_PAG_COMP ON
+      TAB_BANCO_CC.COD_HISTORICO_PAG_COMP = HIST_PAG_COMP.COD_HISTORICO
+    LEFT JOIN TAB_PLANO_CONTA PCONTA_REC_COMP ON
+      TAB_BANCO_CC.COD_CONTA_REC_COMP = PCONTA_REC_COMP.COD_CONTA
+    LEFT JOIN TAB_HISTORICO_PADRAO HIST_REC_COMP ON
+      TAB_BANCO_CC.COD_HISTORICO_REC_COMP = HIST_REC_COMP.COD_HISTORICO
+    WHERE
+      TAB_FLUXO_LOTE.COD_LOJA  = :PAR_COD_LOJA
+      AND
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :PAR_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_CHAVE_FLUXO = :PAR_COD_CHAVE_FLUXO
+    into
+      :V_VALOR,
+      :V_TIPO_CONTA,
+      :V_TIPO_PARCEIRO,
+      :V_COD_PARCEIRO,
+      :V_CONTA_CONTABIL_BCO,
+      :V_COD_CONTA_BANCO,
+      :V_COD_HISTORICO_PAGTO,
+      :V_COD_HISTORICO_RECEBTO,
+      :V_DES_HISTORICO_PAGTO,
+      :V_DES_HISTORICO_RECEBTO,
+      :V_COD_CONTA_PAG_COMP,
+      :V_CONTA_CONTABIL_PAG_COMP,
+      :V_COD_HISTORICO_PAG_COMP,
+      :V_DES_HISTORICO_PAG_COMP,
+      :V_NUM_TIPO,
+      :V_TIPO_CONTA_CAD,
+      :V_COD_CONTA_REC_COMP,
+      :V_CONTA_CONTABIL_REC_COMP,
+      :V_COD_HISTORICO_REC_COMP,
+      :V_DES_HISTORICO_REC_COMP,
+      :V_NUM_DOCTO,
+      :V_NUM_NF,
+      :V_NUM_SERIE_NF,
+      :V_FLG_DEPEND_NF,
+      :V_COD_CHAVE_CTB,
+      :V_COD_LOJA_CC,
+      :V_COD_LOJA_FLX;
+
+    else
+    SELECT
+      TAB_FLUXO.VAL_PARCELA,
+      TAB_FLUXO.TIPO_CONTA,
+      TAB_FLUXO.TIPO_PARCEIRO,
+      TAB_FLUXO.COD_PARCEIRO,
+      TAB_PLANO_CONTA.CONTA_CONTABIL AS CONTA_CONTABIL_BCO,
+      TAB_BANCO_CC.COD_CONTA,
+      TAB_BANCO_CC.COD_HISTORICO_PAGAR,
+      TAB_BANCO_CC.COD_HISTORICO_RECEBER,
+      HIST_PAGTO.DES_HISTORICO_PADRAO AS DES_HISTORICO_PAGTO,
+      HIST_RECEBTO.DES_HISTORICO_PADRAO AS DES_HISTORICO_RECEBTO,
+      TAB_BANCO_CC.COD_CONTA_PAG_COMP,
+      PCONTA_PAG_COMP.CONTA_CONTABIL AS CONTA_CONTABIL_PAG_COMP,
+      TAB_BANCO_CC.COD_HISTORICO_PAG_COMP,
+      HIST_PAG_COMP.DES_HISTORICO_PADRAO AS DES_HISTORICO_PAG_COMP,
+      TAB_ENTIDADE.NUM_TIPO,
+      TAB_BANCO_CC.TIPO_CONTA AS TIPO_CONTA_CAD,
+      TAB_BANCO_CC.COD_CONTA_REC_COMP,
+      PCONTA_REC_COMP.CONTA_CONTABIL AS CONTA_CONTABIL_REC_COMP,
+      TAB_BANCO_CC.COD_HISTORICO_REC_COMP,
+      HIST_REC_COMP.DES_HISTORICO_PADRAO AS DES_HISTORICO_REC_COMP,
+      TAB_FLUXO.NUM_DOCTO,
+      TAB_FLUXO.NUM_NF,
+      TAB_FLUXO.NUM_SERIE_NF,
+      TAB_FLUXO.FLG_DEPEND_NF,
+      TAB_FLUXO.COD_CHAVE_CTB,
+      TAB_BANCO_CC.COD_LOJA AS COD_LOJA_CC,
+      TAB_FLUXO.COD_LOJA
+    FROM
+      TAB_FLUXO
+    INNER JOIN TAB_BANCO_CC ON
+      (TAB_FLUXO.COD_BANCO_PGTO = TAB_BANCO_CC.COD_BANCO
+      AND
+      TAB_FLUXO.DES_CC = TAB_BANCO_CC.DES_CC)
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    LEFT JOIN TAB_PLANO_CONTA ON
+      TAB_BANCO_CC.COD_CONTA = TAB_PLANO_CONTA.COD_CONTA
+    LEFT JOIN TAB_HISTORICO_PADRAO HIST_PAGTO ON
+      TAB_BANCO_CC.COD_HISTORICO_PAGAR = HIST_PAGTO.COD_HISTORICO
+    LEFT JOIN TAB_HISTORICO_PADRAO HIST_RECEBTO ON
+      TAB_BANCO_CC.COD_HISTORICO_RECEBER = HIST_RECEBTO.COD_HISTORICO
+    LEFT JOIN TAB_PLANO_CONTA PCONTA_PAG_COMP ON
+      TAB_BANCO_CC.COD_CONTA_PAG_COMP = PCONTA_PAG_COMP.COD_CONTA
+    LEFT JOIN TAB_HISTORICO_PADRAO HIST_PAG_COMP ON
+      TAB_BANCO_CC.COD_HISTORICO_PAG_COMP = HIST_PAG_COMP.COD_HISTORICO
+    LEFT JOIN TAB_PLANO_CONTA PCONTA_REC_COMP ON
+      TAB_BANCO_CC.COD_CONTA_REC_COMP = PCONTA_REC_COMP.COD_CONTA
+    LEFT JOIN TAB_HISTORICO_PADRAO HIST_REC_COMP ON
+      TAB_BANCO_CC.COD_HISTORICO_REC_COMP = HIST_REC_COMP.COD_HISTORICO
+    WHERE
+      TAB_FLUXO.COD_LOJA      = :PAR_COD_LOJA
+      AND
+      TAB_FLUXO.TIPO_CONTA    = :PAR_TIPO_CONTA
+      AND
+      TAB_FLUXO.TIPO_PARCEIRO = :PAR_TIPO_PARCEIRO
+      AND
+      TAB_FLUXO.COD_PARCEIRO  = :PAR_COD_PARCEIRO
+      AND
+      TAB_FLUXO.NUM_REGISTRO  = :PAR_NUM_REGISTRO
+    into
+      :V_VALOR,
+      :V_TIPO_CONTA,
+      :V_TIPO_PARCEIRO,
+      :V_COD_PARCEIRO,
+      :V_CONTA_CONTABIL_BCO,
+      :V_COD_CONTA_BANCO,
+      :V_COD_HISTORICO_PAGTO,
+      :V_COD_HISTORICO_RECEBTO,
+      :V_DES_HISTORICO_PAGTO,
+      :V_DES_HISTORICO_RECEBTO,
+      :V_COD_CONTA_PAG_COMP,
+      :V_CONTA_CONTABIL_PAG_COMP,
+      :V_COD_HISTORICO_PAG_COMP,
+      :V_DES_HISTORICO_PAG_COMP,
+      :V_NUM_TIPO,
+      :V_TIPO_CONTA_CAD,
+      :V_COD_CONTA_REC_COMP,
+      :V_CONTA_CONTABIL_REC_COMP,
+      :V_COD_HISTORICO_REC_COMP,
+      :V_DES_HISTORICO_REC_COMP,
+      :V_NUM_DOCTO,
+      :V_NUM_NF,
+      :V_NUM_SERIE_NF,
+      :V_FLG_DEPEND_NF,
+      :V_COD_CHAVE_CTB,
+      :V_COD_LOJA_CC,
+      :V_COD_LOJA_FLX;
+
+
+    /*PEGA O VALOR DA PARCELA ABATENDO O VALOR DAS DEDUCOES*/
+     V_DES_EVENTO = 'VALOR PARCELA';
+     V_VALOR = :V_VALOR - :V_VAL_TOT_DEDUCOES;
+
+     execute procedure STP_CONTA_CTB_PARCEIRO(:PAR_TIPO_PARCEIRO_CTB, :PAR_COD_PARCEIRO_CTB)
+       returning_values(v_COD_CONTA_PARCEIRO);
+
+     SELECT
+       CONTA_CONTABIL
+     FROM
+       TAB_PLANO_CONTA
+     WHERE
+       COD_CONTA = :v_COD_CONTA_PARCEIRO
+     into
+       :V_CONTA_CONTABIL_PARCEIRO;
+
+
+      /*CONTA DO BANCO*/
+     if (V_COD_CONTA_BANCO is not NULL) then
+     begin
+       v_COD_CONTA_CREDITO = :V_COD_CONTA_BANCO;
+       V_CONTA_CONTABIL_CREDITO = :V_CONTA_CONTABIL_BCO;
+     end
+      
+      /*CONTA DO BANCO*/                
+     if (V_COD_CONTA_BANCO is not NULL) then
+     begin
+       v_COD_CONTA_DEBITO = V_COD_CONTA_BANCO;
+       V_CONTA_CONTABIL_DEBITO = :V_CONTA_CONTABIL_BCO;
+     end
+
+     if (PAR_FLG_ESTORNO = 'S') then
+     begin
+       for
+         SELECT FIRST 1
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+         FROM
+           TAB_FLUXO_LOTE
+         WHERE
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO < :PAR_COD_CHAVE_MOVBCO
+           AND
+           TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+           AND
+           TAB_FLUXO_LOTE.COD_CHAVE_FLUXO = :PAR_COD_CHAVE_FLUXO
+         ORDER BY
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO DESC
+       into
+         :v_COD_CHAVE_MOVBCO
+       do
+         SELECT
+           COUNT(*)
+         FROM
+           TAB_FLUXO_LOTE
+         WHERE
+           TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+           AND
+           TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+           AND
+           TAB_FLUXO_LOTE.COD_LOJA <> :v_COD_LOJA_CC
+         into
+           :v_QTD_LOJAS_DIF_CC;
+     end
+     else
+       SELECT
+         COUNT(*)
+       FROM
+         TAB_FLUXO_LOTE
+       WHERE
+         TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :PAR_COD_CHAVE_MOVBCO
+         AND
+         TAB_FLUXO_LOTE.COD_LOJA IS NOT NULL
+         AND
+         TAB_FLUXO_LOTE.COD_LOJA <> :v_COD_LOJA_CC
+       into
+         :v_QTD_LOJAS_DIF_CC;
+
+
+     /*SE FOR ENTIDADE CHEQUE E CONTA FOR CORRENTE*/
+     if ((V_NUM_TIPO = 2) and (V_TIPO_CONTA_CAD = 0)) then
+     begin
+         /*CONTA DE CHEQUES A COMPENSAR PAGAMENTOS*/
+         if (v_TIPO_CONTA = 0) then
+           if (V_COD_CONTA_PAG_COMP is not NULL) then
+           begin
+             v_COD_CONTA_CREDITO = :V_COD_CONTA_PAG_COMP;
+             v_CONTA_CONTABIL_CREDITO = :V_CONTA_CONTABIL_PAG_COMP;
+             v_COD_CONTA_DEBITO = :V_COD_CONTA_PAG_COMP;
+             v_CONTA_CONTABIL_DEBITO = :V_CONTA_CONTABIL_PAG_COMP;
+           end
+
+         /*CONTA DE CHEQUES A COMPENSAR RECEBIMENTOS*/
+         if (v_TIPO_CONTA = 1) then
+           if (V_COD_CONTA_REC_COMP is not NULL) then
+           begin
+             v_COD_CONTA_CREDITO = :V_COD_CONTA_REC_COMP;
+             v_CONTA_CONTABIL_CREDITO = :V_CONTA_CONTABIL_REC_COMP;
+             v_COD_CONTA_DEBITO = :V_COD_CONTA_REC_COMP;
+             v_CONTA_CONTABIL_DEBITO = :V_CONTA_CONTABIL_REC_COMP;
+           end
+     end
+
+     if ((v_QTD_LOJAS_DIF_CC > 0) and (v_COD_CONTA_COMPENS is not null)) then
+     begin
+       v_COD_CONTA_CREDITO = :v_COD_CONTA_COMPENS;
+       v_CONTA_CONTABIL_CREDITO = :v_CONTA_CONTABIL_COMPENS;
+       v_COD_CONTA_DEBITO = :v_COD_CONTA_COMPENS;
+       v_CONTA_CONTABIL_DEBITO = :v_CONTA_CONTABIL_COMPENS;
+     end
+
+     /*PREVIA PARA VALOR DA PARCELA*/
+     if (:v_COD_CONTA_PARCEIRO is not NULL) then
+     begin
+       if (v_TIPO_CONTA = 1) then /* RECEBIMENTO */
+       begin
+         v_COD_CONTA_CREDITO = v_COD_CONTA_PARCEIRO;
+         V_CONTA_CONTABIL_CREDITO = V_CONTA_CONTABIL_PARCEIRO;
+         V_COD_HISTORICO = V_COD_HISTORICO_RECEBTO;
+         V_DES_HISTORICO = V_DES_HISTORICO_RECEBTO;
+       end
+       else  /* PAGAMENTO */
+       begin
+         v_COD_CONTA_DEBITO = v_COD_CONTA_PARCEIRO;
+         V_CONTA_CONTABIL_DEBITO = V_CONTA_CONTABIL_PARCEIRO;
+         V_COD_HISTORICO = V_COD_HISTORICO_PAGTO;
+         V_DES_HISTORICO = V_DES_HISTORICO_PAGTO;
+       end
+     end
+
+     /*SE FOR ENTIDADE CHEQUE E CONTA FOR CORRENTE PEGA HISTORICO DE CHEQ. COMPENS.*/
+     if ((V_NUM_TIPO = 2) and (V_TIPO_CONTA_CAD = 0)) then
+     begin
+       /*HISTORICO DE CHEQUES A COMPENSAR PAGAMENTOS*/
+       if (v_TIPO_CONTA = 0) then
+         if (V_COD_HISTORICO_PAG_COMP is not NULL) then
+         begin
+           V_COD_HISTORICO = V_COD_HISTORICO_PAG_COMP;
+           V_DES_HISTORICO = V_DES_HISTORICO_PAG_COMP;
+         end
+
+       /*HISTORICO DE CHEQUES A COMPENSAR RECEBIMENTOS*/
+       if (v_TIPO_CONTA = 1) then
+         if (V_COD_HISTORICO_REC_COMP is not NULL) then
+         begin
+           V_COD_HISTORICO = V_COD_HISTORICO_REC_COMP;
+           V_DES_HISTORICO = V_DES_HISTORICO_REC_COMP;
+         end
+     end
+
+     /*TRATAMENTO PARA TITULO GERADO POR RETENCAO TRIBUTARIA*/
+     if  ((v_TIPO_CONTA = 0) and (substring(v_NUM_DOCTO from 1 for 6) = 'RETEN.')) then
+     begin
+       SELECT
+         TAB_PLANO_CONTA.COD_CONTA AS COD_CONTA_CRED_RET,
+         TAB_PLANO_CONTA.CONTA_CONTABIL AS CONTA_CREDITO_RET
+       FROM
+         TAB_NF_RETENCAO
+       INNER JOIN TAB_RETENCAO ON
+         TAB_NF_RETENCAO.COD_RETENCAO = TAB_RETENCAO.COD_RETENCAO
+       INNER JOIN TAB_PLANO_CONTA ON
+         TAB_RETENCAO.COD_CONTA = TAB_PLANO_CONTA.COD_CONTA
+       WHERE
+         TAB_NF_RETENCAO.COD_CHAVE_CTB = :v_COD_CHAVE_CTB
+       GROUP BY
+         TAB_PLANO_CONTA.COD_CONTA,
+         TAB_PLANO_CONTA.CONTA_CONTABIL
+        into
+          :v_COD_CONTA_CRED_RET,
+          :v_CONTA_CREDITO_RET;
+
+        v_COD_CONTA_DEBITO = v_COD_CONTA_CRED_RET;
+        v_CONTA_CONTABIL_DEBITO = v_CONTA_CREDITO_RET;
+     end
+
+
+     /*TRATAMENTO PARA RECEBIMENTO DE DEVOLUCAO DE FORNECEDOR COM CONTA DEBITO NO ID. CONTABIL*/
+     if ((v_TIPO_CONTA = 1) and (v_TIPO_PARCEIRO = 1) and (v_FLG_DEPEND_NF = 'S')) then /*RECEBIMENTO DE DEVOLUCAO DE NF DE FORNECEDOR*/
+     begin
+    
+        SELECT
+          MAX(TAB_ID_CTB.COD_CONTA_DEB) AS COD_CONTA_DEB_ID_DEV ,
+          MAX(TAB_PLANO_CONTA.CONTA_CONTABIL) AS CONTA_CONTABIL_DEB_ID_DEV ,
+          MAX(TAB_NF.TIPO_NF) AS TIPO_NF ,
+          MAX(TAB_NF.TIPO_OPERACAO) AS TIPO_OPERACAO_NF
+         FROM
+           TAB_NF
+         INNER JOIN TAB_NF_ITEM ON
+            (TAB_NF.COD_PARCEIRO = TAB_NF_ITEM.COD_PARCEIRO
+             AND
+             TAB_NF.NUM_NF = TAB_NF_ITEM.NUM_NF
+             AND
+             TAB_NF.NUM_SERIE_NF = TAB_NF_ITEM.NUM_SERIE_NF
+             AND
+             TAB_NF.TIPO_PARCEIRO = TAB_NF_ITEM.TIPO_PARCEIRO
+             AND
+             TAB_NF.TIPO_IDENT  = TAB_NF_ITEM.TIPO_IDENT)
+         INNER JOIN TAB_ID_CTB ON
+            TAB_NF_ITEM.COD_ID_CTB = TAB_ID_CTB.COD_ID_CTB
+         LEFT JOIN TAB_PLANO_CONTA ON
+           TAB_ID_CTB.COD_CONTA_DEB = TAB_PLANO_CONTA.COD_CONTA
+         WHERE
+           TAB_NF.COD_CHAVE_CTB = :v_COD_CHAVE_CTB
+           AND
+           TAB_NF.NUM_NF = :v_NUM_NF
+           AND
+           TAB_NF.NUM_SERIE_NF_PARC = :v_NUM_SERIE_NF
+           AND
+           TAB_NF.TIPO_NF = 3
+           AND
+           TAB_NF.TIPO_OPERACAO = 1
+         into
+           :v_COD_CONTA_DEB_ID_DEV,
+           :v_CONTA_CONTABIL_DEB_ID_DEV,
+           :v_TIPO_NF,
+           :v_TIPO_OPERACAO_NF;
+        
+         if ((v_TIPO_NF = 3) and /*DEVOLUCAO DE FORNECEDOR*/
+             (v_TIPO_OPERACAO_NF = 1) and
+             (coalesce(v_COD_CONTA_DEB_ID_DEV, 0) <> 0)) then /*SE FOR NOTA DE DEVOL. DE FORN. E TIVER CONTA DEB. NO ID CONTABIL*/
+         begin
+           /*PEGA CONTA DEB. DO ID CONTABIL E JOGA NO CREDITO DO RECEBIMENTO*/
+           v_COD_CONTA_CREDITO = v_COD_CONTA_DEB_ID_DEV;
+           v_CONTA_CONTABIL_CREDITO = v_CONTA_CONTABIL_DEB_ID_DEV;
+         end
+    
+     end
+     /**/
+
+     /*TRATAMENTO PARA PAGAMENTO DE ENTRADA DE NOTA DE FORNECEDOR COM CONTA CREDITO NO ID. CONTABIL*/
+     if ((v_TIPO_CONTA = 0) and (v_TIPO_PARCEIRO = 1) and (v_FLG_DEPEND_NF = 'S')) then /*PAGAMENTO DE ENTRADA DE NF DE FORNECEDOR*/
+     begin
+    
+        SELECT
+          MAX(TAB_ID_CTB.COD_CONTA_CRED) AS COD_CONTA_CRED_ID_ENT ,
+          MAX(TAB_PLANO_CONTA.CONTA_CONTABIL) AS CONTA_CONTABIL_CRED_ID_ENT ,
+          MAX(TAB_NF.TIPO_NF) AS TIPO_NF ,
+          MAX(TAB_NF.TIPO_OPERACAO) AS TIPO_OPERACAO_NF
+         FROM
+           TAB_NF
+         INNER JOIN TAB_NF_ITEM ON
+            (TAB_NF.COD_PARCEIRO = TAB_NF_ITEM.COD_PARCEIRO
+             AND
+             TAB_NF.NUM_NF = TAB_NF_ITEM.NUM_NF
+             AND
+             TAB_NF.NUM_SERIE_NF = TAB_NF_ITEM.NUM_SERIE_NF
+             AND
+             TAB_NF.TIPO_PARCEIRO = TAB_NF_ITEM.TIPO_PARCEIRO
+             AND
+             TAB_NF.TIPO_IDENT  = TAB_NF_ITEM.TIPO_IDENT)
+         INNER JOIN TAB_ID_CTB ON
+            TAB_NF_ITEM.COD_ID_CTB = TAB_ID_CTB.COD_ID_CTB
+         LEFT JOIN TAB_PLANO_CONTA ON
+           TAB_ID_CTB.COD_CONTA_CRED = TAB_PLANO_CONTA.COD_CONTA
+         WHERE
+           TAB_NF.COD_CHAVE_CTB = :v_COD_CHAVE_CTB
+           AND
+           TAB_NF.NUM_NF = :v_NUM_NF
+           AND
+           TAB_NF.NUM_SERIE_NF_PARC = :v_NUM_SERIE_NF
+           AND
+           TAB_NF.TIPO_NF in (0, 6)
+           AND
+           TAB_NF.TIPO_OPERACAO = 0
+         into
+           :v_COD_CONTA_CRED_ID_ENT,
+           :v_CONTA_CONTABIL_CRED_ID_ENT,
+           :v_TIPO_NF,
+           :v_TIPO_OPERACAO_NF;
+        
+         if (((v_TIPO_NF = 0) or (v_TIPO_NF = 6))  and /*ENTRADA DE FORNECEDOR*/
+             (v_TIPO_OPERACAO_NF = 0) and
+             (coalesce(v_COD_CONTA_CRED_ID_ENT, 0) <> 0)) then /*SE FOR NOTA DE ENTRADA DE FORN. E TIVER CONTA CRED. NO ID CONTABIL*/
+         begin
+           /*PEGA CONTA CRED. DO ID CONTABIL E JOGA NO DEBITO DO PAGAMENTO*/
+           v_COD_CONTA_DEBITO = v_COD_CONTA_CRED_ID_ENT;
+           v_CONTA_CONTABIL_DEBITO = v_CONTA_CONTABIL_CRED_ID_ENT;
+         end
+    
+     end
+     /**/
+
+     SUSPEND;
+
+
+
+     for
+        SELECT
+          TAB_FLUXO_LOTE_EVENTO.COD_EVENTO,
+          TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO,
+          TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO,
+          TAB_EVENTO_FINANCEIRO.DES_EVENTO,
+          TAB_EVENTO_FINANCEIRO.COD_CONTA_PGTO,
+          TAB_EVENTO_FINANCEIRO.COD_CONTA_RCBMTO,
+          PCONTA_PAGTO.CONTA_CONTABIL AS CONTA_CONTABIL_PAGTO,
+          PCONTA_RECEBTO.CONTA_CONTABIL AS CONTA_CONTABIL_RECEBTO,
+          TAB_EVENTO_FINANCEIRO.COD_HISTORICO_PGTO,
+          TAB_EVENTO_FINANCEIRO.COD_HISTORICO_RCBMTO,
+          HIST_PAGTO.DES_HISTORICO_PADRAO AS DES_HISTORICO_PAGTO,
+          HIST_RECEBTO.DES_HISTORICO_PADRAO AS DES_HISTORICO_RECEBTO
+        FROM
+          TAB_FLUXO_LOTE_EVENTO
+        INNER JOIN TAB_EVENTO_FINANCEIRO ON
+          TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+        LEFT JOIN TAB_PLANO_CONTA PCONTA_PAGTO ON
+          TAB_EVENTO_FINANCEIRO.COD_CONTA_PGTO = PCONTA_PAGTO.COD_CONTA
+        LEFT JOIN TAB_PLANO_CONTA PCONTA_RECEBTO ON
+          TAB_EVENTO_FINANCEIRO.COD_CONTA_RCBMTO = PCONTA_RECEBTO.COD_CONTA
+        LEFT JOIN TAB_HISTORICO_PADRAO HIST_PAGTO ON
+          TAB_EVENTO_FINANCEIRO.COD_HISTORICO_PGTO = HIST_PAGTO.COD_HISTORICO
+        LEFT JOIN TAB_HISTORICO_PADRAO HIST_RECEBTO ON
+          TAB_EVENTO_FINANCEIRO.COD_HISTORICO_RCBMTO = HIST_RECEBTO.COD_HISTORICO
+        WHERE
+          TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO = :PAR_COD_CHAVE_MOVBCO
+          AND
+          TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO = :PAR_COD_CHAVE_FLUXO
+          AND
+          TAB_FLUXO_LOTE_EVENTO.COD_EVENTO <> 5 /*EVENTO DE RETENCAO NAO SERAH MAIS CONTABILIZADO POR AQUI,*/
+        into                               /*E SIM PELO CADASTRO DE RETENCOES TRIBUTARIAS*/
+          :v_COD_EVENTO,
+          :v_VAL_EVENTO,
+          :v_TIPO_OPERACAO,
+          :v_DES_EVENTO,
+          :v_COD_CONTA_PGTO,
+          :v_COD_CONTA_RCBMTO,
+          :v_CONTA_CONTABIL_PAGTO,
+          :v_CONTA_CONTABIL_RECEBTO,
+          :V_COD_HISTORICO_PAGTO,
+          :V_COD_HISTORICO_RECEBTO,
+          :V_DES_HISTORICO_PAGTO,
+          :V_DES_HISTORICO_RECEBTO
+     do
+     begin
+         V_COD_CONTA_CREDITO = NULL;
+         V_CONTA_CONTABIL_CREDITO = NULL;
+         v_COD_CONTA_DEBITO = NULL;
+         V_CONTA_CONTABIL_DEBITO = NULL;
+         V_COD_HISTORICO = NULL;
+         V_DES_HISTORICO = NULL;
+
+         V_VALOR = :V_VAL_EVENTO;
+
+         /*ATRIBUI CONTAS CONTABEIS DOS EVENTOS*/
+         if (:v_TIPO_CONTA = 1) then /* RECEBIMENTO */
+         begin
+           v_COD_CONTA_CREDITO = :v_COD_CONTA_RCBMTO;
+           V_CONTA_CONTABIL_CREDITO = :v_CONTA_CONTABIL_RECEBTO;
+
+           v_COD_CONTA_DEBITO = v_COD_CONTA_RCBMTO;
+           V_CONTA_CONTABIL_DEBITO = :v_CONTA_CONTABIL_RECEBTO;
+
+           V_COD_HISTORICO = V_COD_HISTORICO_RECEBTO;
+           V_DES_HISTORICO = V_DES_HISTORICO_RECEBTO;
+         end
+         /*PAGAMENTO*/
+         else
+         begin
+           v_COD_CONTA_CREDITO = :v_COD_CONTA_PGTO;
+           V_CONTA_CONTABIL_CREDITO = :v_CONTA_CONTABIL_PAGTO;
+
+           v_COD_CONTA_DEBITO = v_COD_CONTA_PGTO;
+           V_CONTA_CONTABIL_DEBITO = :v_CONTA_CONTABIL_PAGTO;
+
+           V_COD_HISTORICO = V_COD_HISTORICO_PAGTO;
+           V_DES_HISTORICO = V_DES_HISTORICO_PAGTO;
+         end
+
+          /*PREVIA PARA OS EVENTOS FINANCEIROS*/
+          /*SE TIPO DE EVENTO FOR DE ACRESCIMO*/
+         if (:V_TIPO_OPERACAO = 0) then
+         begin
+           if (:v_COD_CONTA_BANCO is not NULL) then
+           begin
+             if (:v_TIPO_CONTA = 1) then /* RECEBIMENTO */
+             begin
+               V_COD_CONTA_DEBITO = v_COD_CONTA_BANCO;
+               V_CONTA_CONTABIL_DEBITO = V_CONTA_CONTABIL_BCO;
+
+               /*SE FOR ENTIDADE CHEQUE E CONTA FOR CORRENTE*/
+               if ((V_NUM_TIPO = 2) and (V_TIPO_CONTA_CAD = 0)) then
+               begin
+                 /*CONTA DE CHEQUES A COMPENSAR*/
+                 if (V_COD_CONTA_REC_COMP is not NULL) then
+                 begin
+                   V_COD_CONTA_DEBITO = :V_COD_CONTA_REC_COMP;
+                   V_CONTA_CONTABIL_DEBITO = :V_CONTA_CONTABIL_REC_COMP;
+                 end
+               end
+
+             end
+             else  /* PAGAMENTO */
+             begin
+               V_COD_CONTA_CREDITO  = v_COD_CONTA_BANCO;
+               V_CONTA_CONTABIL_CREDITO = V_CONTA_CONTABIL_BCO;
+
+               /*SE FOR ENTIDADE CHEQUE E CONTA FOR CORRENTE*/
+               if ((V_NUM_TIPO = 2) and (V_TIPO_CONTA_CAD = 0)) then
+               begin
+                 /*CONTA DE CHEQUES A COMPENSAR*/
+                 if (V_COD_CONTA_PAG_COMP is not NULL) then
+                 begin
+                   V_COD_CONTA_CREDITO = :V_COD_CONTA_PAG_COMP;
+                   V_CONTA_CONTABIL_CREDITO = :V_CONTA_CONTABIL_PAG_COMP;
+                 end
+               end
+
+             end
+           end
+         end
+
+       /*SE TIPO DE EVENTO FOR DE DEDUCAO*/
+       if (:V_TIPO_OPERACAO = 1) then
+       begin
+         if (v_TIPO_CONTA = 1) then /* RECEBIMENTO */
+         begin
+           v_COD_CONTA_CREDITO = v_COD_CONTA_PARCEIRO;
+           V_CONTA_CONTABIL_CREDITO = V_CONTA_CONTABIL_PARCEIRO;
+           /*v_COD_HISTORICO = REC_COD_HIST_RECEBER;*/
+         end
+         else  /* PAGAMENTO */
+         begin
+           v_COD_CONTA_DEBITO = v_COD_CONTA_PARCEIRO;
+           V_CONTA_CONTABIL_DEBITO = V_CONTA_CONTABIL_PARCEIRO;
+           /*v_COD_HISTORICO = REC_COD_HIST_PAGAR;*/
+
+
+           if ((v_TIPO_CONTA = 0) and (v_TIPO_PARCEIRO = 1) and (v_FLG_DEPEND_NF = 'S')) then /*PAGAMENTO DE ENTRADA DE NF DE FORNECEDOR*/
+             if (((v_TIPO_NF = 0) or (v_TIPO_NF = 6))  and /*ENTRADA DE FORNECEDOR*/
+                 (v_TIPO_OPERACAO_NF = 0) and
+                 (coalesce(v_COD_CONTA_CRED_ID_ENT, 0) <> 0)) then /*SE FOR NOTA DE ENTRADA DE FORN. E TIVER CONTA CRED. NO ID CONTABIL*/
+             begin
+               /*PEGA CONTA CRED. DO ID CONTABIL E JOGA NO DEBITO DO PAGAMENTO*/
+               v_COD_CONTA_DEBITO = v_COD_CONTA_CRED_ID_ENT;
+               v_CONTA_CONTABIL_DEBITO = v_CONTA_CONTABIL_CRED_ID_ENT;
+             end
+         end
+       end
+
+       SUSPEND;
+     end
+
+end^
+
+SET TERM ; ^
+
+GRANT SELECT ON TAB_PARAMETRO_EMPRESA TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_PLANO_CONTA TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_FLUXO_LOTE_EVENTO TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_EVENTO_FINANCEIRO TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_FLUXO_LOTE TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_BANCO_CC TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_ENTIDADE TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_HISTORICO_PADRAO TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_FLUXO TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_CONTA_CTB_PARCEIRO TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_NF_RETENCAO TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_RETENCAO TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_NF TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_NF_ITEM TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT SELECT ON TAB_ID_CTB TO PROCEDURE STP_PREVIA_LANCTO_CTB_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_PREVIA_LANCTO_CTB_FIN TO PROCEDURE PROCEDURE_NOVA;
+GRANT EXECUTE ON PROCEDURE STP_PREVIA_LANCTO_CTB_FIN TO PROCEDURE STP_INSERE_DIARIO_FIN;
+GRANT EXECUTE ON PROCEDURE STP_PREVIA_LANCTO_CTB_FIN TO PROCEDURE STP_INSERE_DIARIO_FIN_LANCTO;
+GRANT EXECUTE ON PROCEDURE STP_PREVIA_LANCTO_CTB_FIN TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+GRANT EXECUTE ON PROCEDURE STP_PREVIA_LANCTO_CTB_FIN TO PROCEDURE TESTE_TAMANHO;
+GRANT EXECUTE ON PROCEDURE STP_PREVIA_LANCTO_CTB_FIN TO "PUBLIC";
+GRANT EXECUTE ON PROCEDURE STP_PREVIA_LANCTO_CTB_FIN TO SYSDBA;

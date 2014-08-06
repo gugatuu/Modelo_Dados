@@ -1,0 +1,1507 @@
+SET TERM ^ ;
+
+CREATE OR ALTER PROCEDURE STP_RETORNA_DIARIO_FIN (
+    par_cod_loja integer,
+    par_dta_inicio timestamp,
+    par_dta_final timestamp,
+    par_tipo_conta integer)
+returns (
+    v_cod_chave_movbco integer,
+    v_cod_loja integer,
+    v_conta_contabil_deb varchar(25),
+    v_conta_contabil_cred varchar(25),
+    v_valor double precision,
+    v_dta_lancamento timestamp,
+    v_complemento varchar(500),
+    v_cod_historico integer,
+    v_cod_conta_cred integer,
+    v_cod_conta_deb integer,
+    v_cod_lote_lancto integer,
+    v_cod_chave_fin integer,
+    v_ano_mes char(6),
+    v_num_docto_pgto varchar(25),
+    v_flg_lancto_multiplo char(1),
+    v_cod_chave_ctb integer,
+    v_num_tipo integer,
+    v_num_bordero integer,
+    v_qtd_reg_criticado integer,
+    v_flg_receb_cartao char(1),
+    v_tipo_operacao_origem integer)
+as
+declare variable v_tipo_conta integer;
+declare variable v_tipo_parceiro integer;
+declare variable v_cod_parceiro integer;
+declare variable v_num_registro integer;
+declare variable v_val_parcela double precision;
+declare variable v_tot_val_acrescimos double precision;
+declare variable v_tot_val_deducoes double precision;
+declare variable v_num_reg integer;
+declare variable v_des_evento_previa varchar(50);
+declare variable v_conta_contabil_deb_previa varchar(25);
+declare variable v_conta_contabil_cred_previa varchar(25);
+declare variable v_valor_previa double precision;
+declare variable v_cod_conta_deb_previa integer;
+declare variable v_cod_conta_cred_previa integer;
+declare variable v_des_historico_previa varchar(500);
+declare variable v_cod_conta_pgto_previa integer;
+declare variable v_cod_conta_rcbmto_previa integer;
+declare variable v_cod_historico_pagto_previa integer;
+declare variable v_cod_historico_recebto_previa integer;
+declare variable v_num_ordem_previa integer;
+declare variable v_flg_estorno char(1);
+declare variable v_dta_quitada timestamp;
+declare variable v_dta_ordenada timestamp;
+declare variable v_qtd_reg integer;
+declare variable v_val_juros double precision;
+declare variable v_val_acrescimo double precision;
+declare variable v_val_desconto double precision;
+declare variable v_val_devolucao double precision;
+declare variable v_val_retencao double precision;
+declare variable v_val_taxa_adm double precision;
+declare variable v_val_outros double precision;
+declare variable v_tipo_operacao_previa integer;
+declare variable v_cod_conta_parceiro integer;
+declare variable v_num_parcela integer;
+declare variable v_qtd_parcela integer;
+declare variable v_dta_vencimento timestamp;
+declare variable v_num_docto varchar(200);
+declare variable v_des_entidade varchar(50);
+declare variable v_num_docto_aceite varchar(200);
+declare variable v_qtd_num_docto_aceite integer;
+declare variable v_num_nf integer;
+declare variable v_cod_hist_pag_div integer;
+declare variable v_cod_hist_rec_div integer;
+declare variable v_complemento_div varchar(500);
+declare variable v_cod_historico_previa integer;
+declare variable v_flg_leitura_vda char(1);
+declare variable v_cod_bandeira integer;
+declare variable v_cod_banco_tran integer;
+declare variable v_des_cc_tran varchar(10);
+declare variable v_cod_banco_pgto integer;
+declare variable v_des_cc varchar(10);
+declare variable v_flg_ignora_ctb char(1);
+declare variable v_cod_conta_adm integer;
+declare variable v_cod_entidade integer;
+declare variable v_des_parceiro varchar(50);
+declare variable v_cod_conta_band integer;
+declare variable v_des_bandeira varchar(50);
+declare variable v_tipo_parceiro_ctb integer;
+declare variable v_cod_parceiro_ctb integer;
+declare variable v_tipo_parceiro_desc varchar(50);
+declare variable v_des_critica_ctb varchar(500);
+declare variable v_cod_conta_banco integer;
+declare variable v_cod_hist_pagar integer;
+declare variable v_cod_hist_receber integer;
+declare variable v_dta_quit_formatada varchar(10);
+declare variable v_num_reg_manual integer;
+declare variable v_cod_conta_estorno integer;
+declare variable v_conta_contabil_estorno varchar(25);
+declare variable v_cod_historico_estorno integer;
+declare variable v_conta_contabil_bco varchar(25);
+declare variable v_val_docto double precision;
+declare variable v_num_reg_estorno integer;
+declare variable v_dta_quitada_mov_bco timestamp;
+declare variable v_val_parcela_flx double precision;
+declare variable v_dta_pgto timestamp;
+declare variable v_val_parcela_cheque double precision;
+declare variable v_tot_val_acrescimos_cheque double precision;
+declare variable v_tot_val_deducoes_cheque double precision;
+declare variable v_cod_loja_cc integer;
+declare variable v_qtd_lojas_dif_cc integer;
+declare variable v_cod_conta_compens_previa integer;
+declare variable v_cod_conta_pag_comp_previa integer;
+declare variable v_cod_conta_rec_comp_previa integer;
+begin
+/* 
+STATUS: CHECK-IN
+DATA: 25/04/2014
+VERSAO: 5.7.6
+USUARIO: GUSTAVO SALA
+OS: 6441 - Criar conta transitoria para pagamento entre lojas
+*/
+
+  SELECT
+    COD_BANCO,
+    DES_CC
+  FROM
+    TAB_PARAMETRO_LOJA
+  WHERE
+    TAB_PARAMETRO_LOJA.COD_LOJA = :PAR_COD_LOJA
+  into
+    :v_COD_BANCO_TRAN,
+    :v_DES_CC_TRAN;
+
+  for SELECT DISTINCT
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO,
+      TAB_MOV_BCO.FLG_ESTORNO,
+      TAB_MOV_BCO.DTA_ORDENADA,
+      TAB_MOV_BCO.VAL_DOCTO,
+      TAB_MOV_BCO.DTA_QUITADA,
+      TAB_MOV_BCO.DTA_PGTO
+    FROM
+      TAB_FLUXO_LOTE
+    INNER JOIN TAB_MOV_BCO on
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_MOV_BCO.COD_CHAVE
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    WHERE
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND /*FAZ O CASE ABAIXO POR QUESTAO DE COMPATIBILIDADE PARA O NOVO CAMPO TAB_MOV_BCO.DTA_QUITADA*/
+       ((CASE WHEN (TAB_MOV_BCO.DTA_QUITADA IS NOT NULL) THEN
+           TAB_MOV_BCO.DTA_QUITADA
+         ELSE
+           TAB_MOV_BCO.DTA_PGTO
+         END BETWEEN :PAR_DTA_INICIO AND :PAR_DTA_FINAL
+        AND
+        TAB_MOV_BCO.FLG_ESTORNO = 'N')
+       OR
+       (TAB_MOV_BCO.DTA_ORDENADA BETWEEN :PAR_DTA_INICIO AND :PAR_DTA_FINAL
+        AND
+        TAB_MOV_BCO.FLG_ESTORNO = 'S'))      
+      AND
+      TAB_MOV_BCO.FLG_FLUXO = 'S'
+      AND
+      TAB_FLUXO_LOTE.FLG_CONFERIDO_CTB = 'N'
+      AND
+      (TAB_FLUXO_LOTE.TIPO_CONTA = :PAR_TIPO_CONTA
+       OR
+       :PAR_TIPO_CONTA = -1)
+      AND
+      /*Nao contabiliza titulo gerado na transferencia da tesouraria*/
+      NOT (
+            TAB_FLUXO_LOTE.TIPO_CONTA = 1
+            AND
+            TAB_FLUXO_LOTE.FLG_LEITURA_VDA = 'S'
+            AND
+            TAB_FLUXO_LOTE.DTA_QUITADA IS NOT NULL
+            AND
+            TAB_FLUXO_LOTE.TIPO_PARCEIRO = 3
+            AND
+            TAB_ENTIDADE.NUM_TIPO = 0
+          )
+    ORDER BY
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO
+    into
+      :v_COD_CHAVE_MOVBCO,
+      :v_FLG_ESTORNO,
+      :v_DTA_ORDENADA,
+      :v_VAL_DOCTO,
+      :v_DTA_QUITADA_MOV_BCO,
+      :v_DTA_PGTO
+  do
+  begin
+    v_COD_LOTE_LANCTO = GEN_ID(GEN_COD_LOTE_LANCTO, 1);
+    v_FLG_LANCTO_MULTIPLO = 'N';
+    v_FLG_RECEB_CARTAO = 'N';
+
+    v_NUM_REG = 0;
+    v_QTD_REG_CRITICADO = 0;
+
+    SELECT
+      SUM(TAB_FLUXO_LOTE.VAL_BRUTO) AS VAL_PARCELA
+    FROM
+      TAB_FLUXO_LOTE      
+    INNER JOIN TAB_SUBCATEGORIA ON
+      (TAB_FLUXO_LOTE.COD_CATEGORIA = TAB_SUBCATEGORIA.COD_CATEGORIA
+       AND
+       TAB_FLUXO_LOTE.COD_SUBCATEGORIA = TAB_SUBCATEGORIA.COD_SUBCATEGORIA)
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_SUBCATEGORIA.FLG_IGNORA_ORCTO = 'N'
+      AND
+      TAB_ENTIDADE.NUM_TIPO <> 2 /*DIFERENTE DE CHEQUE*/
+    into
+      :v_VAL_PARCELA;
+
+
+    SELECT
+      SUM(TAB_FLUXO_LOTE.VAL_BRUTO) AS VAL_PARCELA
+    FROM
+      TAB_FLUXO_LOTE      
+    INNER JOIN TAB_SUBCATEGORIA ON
+      (TAB_FLUXO_LOTE.COD_CATEGORIA = TAB_SUBCATEGORIA.COD_CATEGORIA
+       AND
+       TAB_FLUXO_LOTE.COD_SUBCATEGORIA = TAB_SUBCATEGORIA.COD_SUBCATEGORIA)
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_SUBCATEGORIA.FLG_IGNORA_ORCTO = 'N'
+      AND
+      TAB_ENTIDADE.NUM_TIPO = 2 /*CHEQUE*/
+    into
+      :v_VAL_PARCELA_CHEQUE;
+
+    /**/
+    /*SOMA TODOS OS EVENTOS DE ACRESCIMOS DIFERENTE DE CHEQUE*/
+    SELECT
+      coalesce(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0.00) AS TOT_VAL_EVENTO
+    FROM
+      TAB_FLUXO_LOTE
+    LEFT JOIN TAB_FLUXO_LOTE_EVENTO ON
+      (TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO
+       AND
+       TAB_FLUXO_LOTE.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO)
+      INNER JOIN TAB_EVENTO_FINANCEIRO ON
+      TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+    INNER JOIN TAB_SUBCATEGORIA ON
+      (TAB_FLUXO_LOTE.COD_CATEGORIA = TAB_SUBCATEGORIA.COD_CATEGORIA
+       AND
+       TAB_FLUXO_LOTE.COD_SUBCATEGORIA = TAB_SUBCATEGORIA.COD_SUBCATEGORIA)
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 0 /*ACRESCIMOS*/
+      AND
+      TAB_SUBCATEGORIA.FLG_IGNORA_ORCTO = 'N'
+      AND
+      TAB_ENTIDADE.NUM_TIPO <> 2 /*DIFERENTE DE CHEQUE*/
+    into
+      :V_TOT_VAL_ACRESCIMOS;
+
+   /*SOMA TODOS OS EVENTOS DE ACRESCIMOS IGUAL A CHEQUE*/
+    SELECT
+      coalesce(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0.00) AS TOT_VAL_EVENTO
+    FROM
+      TAB_FLUXO_LOTE
+    LEFT JOIN TAB_FLUXO_LOTE_EVENTO ON
+      (TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO
+       AND
+       TAB_FLUXO_LOTE.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO)
+      INNER JOIN TAB_EVENTO_FINANCEIRO ON
+      TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+    INNER JOIN TAB_SUBCATEGORIA ON
+      (TAB_FLUXO_LOTE.COD_CATEGORIA = TAB_SUBCATEGORIA.COD_CATEGORIA
+       AND
+       TAB_FLUXO_LOTE.COD_SUBCATEGORIA = TAB_SUBCATEGORIA.COD_SUBCATEGORIA)
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 0 /*ACRESCIMOS*/
+      AND
+      TAB_SUBCATEGORIA.FLG_IGNORA_ORCTO = 'N'
+      AND
+      TAB_ENTIDADE.NUM_TIPO = 2 /*CHEQUE*/
+    into
+      :V_TOT_VAL_ACRESCIMOS_CHEQUE;
+
+
+    /*SOMA TODOS OS EVENTOS DE DEDUCOES DIFERENTE DE CHEQUE*/
+    SELECT
+      coalesce(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0.00) AS TOT_VAL_EVENTO
+    FROM
+      TAB_FLUXO_LOTE
+    LEFT JOIN TAB_FLUXO_LOTE_EVENTO ON
+      (TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO
+       AND
+       TAB_FLUXO_LOTE.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO)
+      INNER JOIN TAB_EVENTO_FINANCEIRO ON
+      TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+    INNER JOIN TAB_SUBCATEGORIA ON
+      (TAB_FLUXO_LOTE.COD_CATEGORIA = TAB_SUBCATEGORIA.COD_CATEGORIA
+       AND
+       TAB_FLUXO_LOTE.COD_SUBCATEGORIA = TAB_SUBCATEGORIA.COD_SUBCATEGORIA)
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*DEDUCOES*/
+      AND
+      TAB_SUBCATEGORIA.FLG_IGNORA_ORCTO = 'N'
+      AND
+      TAB_ENTIDADE.NUM_TIPO <> 2 /*DIFERENTE DE CHEQUE*/
+    into
+      :V_TOT_VAL_DEDUCOES;
+
+
+
+    /*SOMA TODOS OS EVENTOS DE DEDUCOES QUE SAO TIPO CHEQUE*/
+    SELECT
+      coalesce(SUM(TAB_FLUXO_LOTE_EVENTO.VAL_EVENTO), 0.00) AS TOT_VAL_EVENTO
+    FROM
+      TAB_FLUXO_LOTE
+    LEFT JOIN TAB_FLUXO_LOTE_EVENTO ON
+      (TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_MOV_BCO
+       AND
+       TAB_FLUXO_LOTE.COD_CHAVE_FLUXO = TAB_FLUXO_LOTE_EVENTO.COD_CHAVE_FLUXO)
+      INNER JOIN TAB_EVENTO_FINANCEIRO ON
+      TAB_FLUXO_LOTE_EVENTO.COD_EVENTO = TAB_EVENTO_FINANCEIRO.COD_EVENTO
+    INNER JOIN TAB_SUBCATEGORIA ON
+      (TAB_FLUXO_LOTE.COD_CATEGORIA = TAB_SUBCATEGORIA.COD_CATEGORIA
+       AND
+       TAB_FLUXO_LOTE.COD_SUBCATEGORIA = TAB_SUBCATEGORIA.COD_SUBCATEGORIA)
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_EVENTO_FINANCEIRO.TIPO_OPERACAO = 1 /*DEDUCOES*/
+      AND
+      TAB_SUBCATEGORIA.FLG_IGNORA_ORCTO = 'N'
+      AND
+      TAB_ENTIDADE.NUM_TIPO = 2 /*CHEQUE*/
+    into
+      :v_TOT_VAL_DEDUCOES_CHEQUE;
+
+    v_VAL_PARCELA = :v_VAL_PARCELA + :V_TOT_VAL_ACRESCIMOS - :V_TOT_VAL_DEDUCOES;
+    v_VAL_PARCELA_CHEQUE = :v_VAL_PARCELA_CHEQUE + :V_TOT_VAL_ACRESCIMOS_CHEQUE - :V_TOT_VAL_DEDUCOES_CHEQUE;
+
+
+    SELECT
+      COUNT(*)
+    FROM
+      TAB_FLUXO_LOTE      
+    INNER JOIN TAB_SUBCATEGORIA ON
+      (TAB_FLUXO_LOTE.COD_CATEGORIA = TAB_SUBCATEGORIA.COD_CATEGORIA
+       AND
+       TAB_FLUXO_LOTE.COD_SUBCATEGORIA = TAB_SUBCATEGORIA.COD_SUBCATEGORIA)
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_SUBCATEGORIA.FLG_IGNORA_ORCTO = 'N'
+    into
+      :v_QTD_REG;
+
+    for
+    SELECT 
+      TAB_FLUXO_LOTE.COD_LOJA,
+      TAB_FLUXO_LOTE.TIPO_CONTA,
+      TAB_FLUXO_LOTE.TIPO_PARCEIRO,
+      TAB_FLUXO_LOTE.COD_PARCEIRO,
+      TAB_FLUXO_LOTE.NUM_REGISTRO,
+      TAB_FLUXO_LOTE.DTA_QUITADA,
+      TAB_FLUXO_LOTE.NUM_PARCELA,
+      TAB_FLUXO_LOTE.QTD_PARCELA,
+      TAB_FLUXO_LOTE.DTA_VENCIMENTO,
+      TAB_FLUXO_LOTE.NUM_DOCTO,
+      TAB_FLUXO_LOTE.NUM_DOCTO_PGTO,
+      TAB_ENTIDADE.DES_ENTIDADE,
+      TAB_FLUXO_LOTE.COD_CHAVE_CTB,
+      BCO_CC.COD_HIST_PAG_DIV,
+      BCO_CC.COD_HIST_REC_DIV,
+      TAB_FLUXO_LOTE.FLG_LEITURA_VDA,
+      TAB_ENTIDADE.NUM_TIPO,
+      TAB_FLUXO_LOTE.COD_BANDEIRA,
+      TAB_FLUXO_LOTE.COD_BANCO_PGTO,
+      TAB_FLUXO_LOTE.DES_CC,
+      TAB_ADMINISTRADORA.COD_CONTA,
+      TAB_FLUXO_LOTE.COD_ENTIDADE,
+      TAB_BANDEIRA.COD_CONTA AS COD_CONTA_BAND,
+      TAB_BANDEIRA.DES_BANDEIRA,
+      TAB_FLUXO_LOTE.COD_CHAVE_FLUXO,
+      BCO_CC.COD_CONTA,
+      BCO_CC.COD_HISTORICO_PAGAR,
+      BCO_CC.COD_HISTORICO_RECEBER,
+      BCO_CC.COD_CONTA_ESTORNO,
+      PCONT_ESTORNO.CONTA_CONTABIL AS CONTA_CONTABIL_ESTORNO,
+      BCO_CC.COD_HISTORICO_ESTORNO,
+      PCONT_BANCO.CONTA_CONTABIL AS CONTA_CONTABIL_BCO,
+      TAB_FLUXO_LOTE.DES_PARCEIRO,
+      TAB_FLUXO_LOTE.NUM_BORDERO,
+      TAB_FLUXO_LOTE.VAL_BRUTO AS VAL_PARCELA,
+      BCO_CC.COD_LOJA
+    FROM
+      TAB_FLUXO_LOTE
+    INNER JOIN TAB_ENTIDADE ON
+      TAB_FLUXO_LOTE.COD_ENTIDADE = TAB_ENTIDADE.COD_ENTIDADE
+    LEFT JOIN TAB_BANCO_CC BCO_CC ON
+     (TAB_FLUXO_LOTE.COD_BANCO_PGTO = BCO_CC.COD_BANCO
+      AND
+      TAB_FLUXO_LOTE.DES_CC = BCO_CC.DES_CC)
+    LEFT JOIN TAB_ADMINISTRADORA ON
+      TAB_FLUXO_LOTE.COD_PARCEIRO = TAB_ADMINISTRADORA.COD_ADMINISTRADORA
+    LEFT JOIN TAB_BANDEIRA ON
+      TAB_FLUXO_LOTE.COD_BANDEIRA = TAB_BANDEIRA.COD_BANDEIRA
+    LEFT JOIN TAB_PLANO_CONTA PCONT_ESTORNO ON
+      BCO_CC.COD_CONTA_ESTORNO = PCONT_ESTORNO.COD_CONTA
+    LEFT JOIN TAB_PLANO_CONTA PCONT_BANCO ON
+      BCO_CC.COD_CONTA = PCONT_BANCO.COD_CONTA
+    INNER JOIN TAB_SUBCATEGORIA ON
+      (TAB_FLUXO_LOTE.COD_CATEGORIA = TAB_SUBCATEGORIA.COD_CATEGORIA
+       AND
+       TAB_FLUXO_LOTE.COD_SUBCATEGORIA = TAB_SUBCATEGORIA.COD_SUBCATEGORIA)
+    WHERE
+      TAB_FLUXO_LOTE.COD_CHAVE_MOVBCO = :v_COD_CHAVE_MOVBCO
+      AND
+      TAB_FLUXO_LOTE.COD_LOJA = :PAR_COD_LOJA
+      AND
+      TAB_SUBCATEGORIA.FLG_IGNORA_ORCTO = 'N'
+    into
+      :v_COD_LOJA,
+      :v_TIPO_CONTA,
+      :v_TIPO_PARCEIRO,
+      :v_COD_PARCEIRO,
+      :v_NUM_REGISTRO,
+      :v_DTA_QUITADA,
+      :v_NUM_PARCELA,
+      :v_QTD_PARCELA,
+      :v_DTA_VENCIMENTO,
+      :v_NUM_DOCTO,
+      :v_NUM_DOCTO_PGTO,
+      :v_DES_ENTIDADE,
+      :v_COD_CHAVE_CTB,
+      :v_COD_HIST_PAG_DIV,
+      :v_COD_HIST_REC_DIV,
+      :v_FLG_LEITURA_VDA,
+      :v_NUM_TIPO,
+      :v_COD_BANDEIRA,
+      :v_COD_BANCO_PGTO,
+      :v_DES_CC,
+      :v_COD_CONTA_ADM,
+      :v_COD_ENTIDADE,
+      :v_COD_CONTA_BAND,
+      :v_DES_BANDEIRA,
+      :v_COD_CHAVE_FIN,
+      :v_COD_CONTA_BANCO,
+      :v_COD_HIST_PAGAR,
+      :v_COD_HIST_RECEBER,
+      :v_COD_CONTA_ESTORNO,
+      :v_CONTA_CONTABIL_ESTORNO,
+      :v_COD_HISTORICO_ESTORNO,
+      :v_CONTA_CONTABIL_BCO,
+      :v_DES_PARCEIRO,
+      :v_NUM_BORDERO,
+      :v_VAL_PARCELA_FLX,
+      :v_COD_LOJA_CC
+    do
+    begin
+      if (v_TIPO_CONTA = 0) then
+        v_TIPO_OPERACAO_ORIGEM = 3;
+      else
+        v_TIPO_OPERACAO_ORIGEM = 2;
+
+      if (v_DTA_QUITADA_MOV_BCO is not null) then
+        v_DTA_QUITADA = v_DTA_QUITADA_MOV_BCO;
+      else
+        v_DTA_QUITADA = v_DTA_PGTO;
+
+      v_FLG_IGNORA_CTB = 'N';
+      v_TIPO_PARCEIRO_CTB = v_TIPO_PARCEIRO;
+      v_COD_PARCEIRO_CTB = v_COD_PARCEIRO;
+
+      /*SE FOR RECEBIMENTO DE CARTAO*/
+      if ((v_TIPO_CONTA = 1) and (v_NUM_TIPO = 1))  then
+        v_FLG_RECEB_CARTAO = 'S';
+      else
+        v_FLG_RECEB_CARTAO = 'N';
+
+      if ((v_FLG_LEITURA_VDA = 'S') or ((v_NUM_TIPO = 1) and (v_COD_BANDEIRA is not null)))  then
+      begin
+
+        /*APENAS VAI CONTABILIZAR SE A CONTA CORRENTE NAO FOR TRANSITORIA*/
+        if ((v_COD_BANCO_PGTO = v_COD_BANCO_TRAN) and (v_DES_CC = v_DES_CC_TRAN)) then
+          v_FLG_IGNORA_CTB = 'S';
+
+        /*SE ENTIDADE FOR DO TIPO CARTAO*/
+        /*VERIFICA SE TITULO DE CARTAO ESTA CONCILIADO, SE NAO ESTIVER MARCA FLG_IGNORA_CTB = SIM */
+        /*if ((v_NUM_TIPO = 1) and (v_COD_BANDEIRA is null)) then
+          v_FLG_IGNORA_CTB = 'S';*/
+
+        /*SE NAO ENCONTRAR CONTA CONTABIL NA ADMINISTRADORA PEGA DA ENTIDADE*/
+        if (v_NUM_TIPO = 1) then
+        begin
+          if ((coalesce(v_COD_CONTA_ADM,0) = 0) or (v_COD_CONTA_BAND is null)) then
+          begin
+            v_COD_PARCEIRO_CTB = v_COD_ENTIDADE;
+            v_DES_PARCEIRO = v_DES_ENTIDADE;
+            v_TIPO_PARCEIRO_CTB = 6;
+          end
+        end
+
+
+        /*SE FOR TIPO CARTAO E TIVER CONTA CONTABIL NA BANDEIRA */
+        /*SOBREPOE A CONTA CONTABIL DA ENTIDADE E ADMINISTRADORA (TIPO_PARCEIRO = 4)*/
+        if (v_NUM_TIPO = 1) then
+          if ((v_FLG_IGNORA_CTB = 'N') and (v_COD_CONTA_BAND is not null)) then
+          begin
+            v_COD_PARCEIRO_CTB = v_COD_BANDEIRA;
+            v_DES_PARCEIRO = v_DES_BANDEIRA;
+            v_TIPO_PARCEIRO_CTB = 5;
+          end
+
+        /*SE NAO FOR CARTAO PEGA O COD_ENTIDADE*/
+        if (v_NUM_TIPO <> 1) then
+        begin
+          v_COD_PARCEIRO_CTB = v_COD_ENTIDADE;
+          v_DES_PARCEIRO = v_DES_ENTIDADE;
+          v_TIPO_PARCEIRO_CTB = 6;
+        end
+      end
+
+
+
+      execute procedure STP_CONTA_CTB_PARCEIRO(:v_TIPO_PARCEIRO_CTB, :v_COD_PARCEIRO_CTB)
+        returning_values(v_COD_CONTA_PARCEIRO);
+
+
+
+
+
+      /*CONCATENA OS NUMEROS DE NF QUE COMPOE TITULO GERADO POR ACEITE*/
+      /*v_NUM_DOCTO_ACEITE = '';
+      v_QTD_NUM_DOCTO_ACEITE = 0;
+
+      if (v_TIPO_CONTA = 0) then
+          for
+            SELECT DISTINCT
+              NUM_NF
+            FROM 
+              TAB_FLUXO_REFERENCIA
+            WHERE
+              COD_CHAVE_REF = :v_COD_CHAVE_CTB
+              AND
+              TIPO_CONTA = 0
+            into
+              :v_NUM_NF
+          do
+          begin
+            v_QTD_NUM_DOCTO_ACEITE = v_QTD_NUM_DOCTO_ACEITE + 1;
+    
+            if (v_QTD_NUM_DOCTO_ACEITE = 1) then
+              v_NUM_DOCTO_ACEITE = v_NUM_NF;
+            else
+              v_NUM_DOCTO_ACEITE = v_NUM_DOCTO_ACEITE || ', ' || v_NUM_NF;
+          end*/
+
+
+      /*SE TIVER NFS REFERENCIADAS DO ACEITE*/
+      /*if (v_NUM_DOCTO_ACEITE <> '') then
+        v_NUM_DOCTO = v_NUM_DOCTO_ACEITE; */
+                
+      v_NUM_DOCTO = SUBSTRING(v_NUM_DOCTO FROM 1 FOR 200);
+
+      /*PEGA SELECT DA PREVIA*/
+
+      SELECT
+        COUNT(*) AS NUM_REG
+      FROM
+        TAB_DIARIO
+      WHERE
+        FLG_AUTO = 0 /*MANUAL*/
+        AND
+        TIPO_OPERACAO in (2,3)
+        AND
+        COD_CHAVE_FIN = :v_COD_CHAVE_FIN
+      into
+        :v_NUM_REG_MANUAL;
+
+      if (:v_NUM_REG_MANUAL > 0) then
+        v_FLG_IGNORA_CTB = 'S';
+
+      if (v_FLG_IGNORA_CTB = 'N') then
+       FOR
+         SELECT
+           V_DES_EVENTO,
+           V_CONTA_CONTABIL_DEBITO,
+           V_CONTA_CONTABIL_CREDITO,
+           V_VALOR,
+           V_COD_CONTA_DEBITO,
+           V_COD_CONTA_CREDITO,
+           V_COD_HISTORICO,
+           V_DES_HISTORICO,
+           V_COD_CONTA_PGTO,
+           V_COD_CONTA_RCBMTO,
+           V_COD_HISTORICO_PAGTO,
+           V_COD_HISTORICO_RECEBTO,
+           CASE WHEN (V_DES_EVENTO = 'VALOR PARCELA') THEN
+             0
+           ELSE
+             1
+           END V_NUM_ORDEM,
+           v_TIPO_OPERACAO,
+           v_COD_CONTA_COMPENS,
+           v_COD_CONTA_PAG_COMP,
+           v_COD_CONTA_REC_COMP
+         FROM
+           STP_PREVIA_LANCTO_CTB_FIN(:v_COD_LOJA,
+                                     :v_TIPO_CONTA,
+                                     :v_TIPO_PARCEIRO,
+                                     :v_COD_PARCEIRO,
+                                     :v_NUM_REGISTRO,
+                                     :v_TIPO_PARCEIRO_CTB,
+                                     :v_COD_PARCEIRO_CTB,
+                                     :v_COD_CHAVE_MOVBCO,
+                                     :v_COD_CHAVE_FIN,
+                                     :v_FLG_ESTORNO)
+         ORDER BY V_NUM_ORDEM
+         into
+           :V_DES_EVENTO_PREVIA,
+           :V_CONTA_CONTABIL_DEB_PREVIA,
+           :V_CONTA_CONTABIL_CRED_PREVIA,
+           :V_VALOR_PREVIA,
+           :V_COD_CONTA_DEB_PREVIA,
+           :V_COD_CONTA_CRED_PREVIA,
+           :V_COD_HISTORICO_PREVIA,
+           :V_DES_HISTORICO_PREVIA,
+           :V_COD_CONTA_PGTO_PREVIA,
+           :V_COD_CONTA_RCBMTO_PREVIA,
+           :V_COD_HISTORICO_PAGTO_PREVIA,
+           :V_COD_HISTORICO_RECEBTO_PREVIA,
+           :V_NUM_ORDEM_PREVIA,
+           :v_TIPO_OPERACAO_PREVIA,
+           :v_COD_CONTA_COMPENS_PREVIA,
+           :v_COD_CONTA_PAG_COMP_PREVIA,
+           :v_COD_CONTA_REC_COMP_PREVIA
+        do
+        begin
+          /*criticss*/
+    
+          if (v_TIPO_PARCEIRO_CTB = 0) then
+            V_TIPO_PARCEIRO_DESC = ' (Cliente)';
+          if (v_TIPO_PARCEIRO_CTB = 1) then
+            V_TIPO_PARCEIRO_DESC = ' (Fornecedor)';
+          if (v_TIPO_PARCEIRO_CTB = 2) then
+            V_TIPO_PARCEIRO_DESC = ' (Transportadora)';
+          if (v_TIPO_PARCEIRO_CTB = 3) then
+            V_TIPO_PARCEIRO_DESC = ' (Loja)';
+          if (v_TIPO_PARCEIRO_CTB = 4) then
+            V_TIPO_PARCEIRO_DESC = ' (Admin. Cartao)';
+          if (v_TIPO_PARCEIRO_CTB = 5) then
+            V_TIPO_PARCEIRO_DESC = ' (Bandeira)';
+          if (v_TIPO_PARCEIRO_CTB = 6) then
+            V_TIPO_PARCEIRO_DESC = ' (Entidade)';
+    
+
+            if (coalesce(v_COD_CONTA_PARCEIRO, 0) = 0) then
+            begin
+              v_DES_CRITICA_CTB = 'Conta Contabil nao vinculada.' ||
+                v_TIPO_PARCEIRO_DESC || ' ' || v_COD_PARCEIRO_CTB || ' - ' ||
+                  v_DES_PARCEIRO || '.' || '|';
+    
+              --v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+              v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+              execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+            end
+    
+                              
+            if (coalesce(v_COD_CONTA_BANCO, 0) = 0) then
+            begin        
+              v_DES_CRITICA_CTB =  'Conta Contabil nao vinculada a Conta Corrente: ' ||
+                v_DES_CC || ' Banco: ' || v_COD_BANCO_PGTO || '.' || '|';
+    
+              --v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+              v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+              execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+            end 
+    
+            execute procedure STP_RET_QTD_LOJAS_DIF_CC(v_COD_CHAVE_MOVBCO, v_COD_LOJA_CC)
+            returning_values(v_QTD_LOJAS_DIF_CC);
+
+            if ((v_QTD_LOJAS_DIF_CC > 0) and (v_COD_CONTA_COMPENS_PREVIA is null)) then
+            begin        
+              v_DES_CRITICA_CTB =  'Conta Contabil Transitoria nao vinculada na Regra de Empresa. ' || '|';
+    
+              v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+              execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+            end 
+
+            /*SE FOR ENTIDADE CHEQUE*/
+            if (v_NUM_TIPO = 2) then
+            begin
+              if ((v_TIPO_CONTA = 0) and (v_COD_CONTA_PAG_COMP_PREVIA is null)) then
+              begin
+                v_DES_CRITICA_CTB =  'Conta Contabil de Cheques a Compensar nao vinculada a Conta Corrente: ' ||
+                  v_DES_CC || ' Banco: ' || v_COD_BANCO_PGTO || '.' || '|';
+    
+                v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+                execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+              end
+
+              if ((v_TIPO_CONTA = 1) and (v_COD_CONTA_REC_COMP_PREVIA is null)) then
+              begin
+                v_DES_CRITICA_CTB =  'Conta Contabil de Cheques a Compensar nao vinculada a Conta Corrente: ' ||
+                  v_DES_CC || ' Banco: ' || v_COD_BANCO_PGTO || '.' || '|';
+    
+                v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+                execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+              end
+            end
+    
+            /*if ((coalesce(v_COD_CONTA_CHEQ_COMP, 0) = 0) or (coalesce(v_COD_HISTORICO_CHEQ_COMP, 0) = 0)) then
+            begin        
+              v_DES_CRITICA_CTB = v_DES_CRITICA_CTB || 'Conta Contabil ou Historico para Cheques a Compensar nao vinculado a Conta Corrente: ' ||
+                REC_DES_CC || ' Banco: ' || REC_COD_BANCO_PGTO || '.' || '|';
+    
+              v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+            /*  v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+            end*/
+    
+    
+            if (V_DES_EVENTO_PREVIA <> 'VALOR PARCELA') then
+            begin
+              if (v_TIPO_CONTA = 0) then
+                if (coalesce(V_COD_CONTA_PGTO_PREVIA, 0) = 0) then
+                begin
+                  v_DES_CRITICA_CTB = 'Conta Contabil de Pagamento nao vinculada ao Evento Financeiro: ' ||
+                    V_DES_EVENTO_PREVIA || '.' || '|';
+    
+                  --v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+                  v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+                  execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+                end
+    
+              if (v_TIPO_CONTA = 1) then
+                if (coalesce(V_COD_CONTA_RCBMTO_PREVIA, 0) = 0) then
+                begin
+                  v_DES_CRITICA_CTB = 'Conta Contabil de Recebimento nao vinculada ao Evento Financeiro: ' ||
+                    V_DES_EVENTO_PREVIA || '.' || '|';
+    
+                  --v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+                  v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+                  execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+                end
+            end
+    
+            
+            if (V_DES_EVENTO_PREVIA = 'VALOR PARCELA') then
+            begin
+              if (coalesce(v_COD_HIST_PAGAR, 0) = 0) then
+              begin
+                v_DES_CRITICA_CTB = 'Historico do Pagamento nao vinculado a Conta Corrente: ' ||
+                  v_DES_CC || ' Banco: ' || v_COD_BANCO_PGTO || '.' || '|';
+    
+               -- v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+                v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+                execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+              end
+              
+              if (coalesce(v_COD_HIST_RECEBER, 0) = 0) then
+              begin
+                v_DES_CRITICA_CTB = 'Historico do Recebimento nao vinculado a Conta Corrente: ' ||
+                  v_DES_CC || ' Banco: ' || v_COD_BANCO_PGTO || '.' || '|';
+    
+                --v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+                v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+                execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+              end
+            end
+                 
+            /* */
+    
+            if (V_DES_EVENTO_PREVIA <> 'VALOR PARCELA') then
+            begin
+              if (v_TIPO_CONTA = 0) then
+                if (coalesce(V_COD_HISTORICO_PAGTO_PREVIA, 0) = 0) then
+                begin
+                  v_DES_CRITICA_CTB = 'Historico do Pagamento nao vinculado ao Evento Financeiro: ' ||
+                    V_DES_EVENTO_PREVIA || '.' || '|';
+    
+                  --v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+                  v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+                  execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+                end
+              
+              if (v_TIPO_CONTA = 1) then
+                if (coalesce(V_COD_HISTORICO_RECEBTO_PREVIA, 0) = 0) then
+                begin
+                  v_DES_CRITICA_CTB = 'Historico do Recebimento nao vinculado ao Evento Financeiro: ' ||
+                    V_DES_EVENTO_PREVIA || '.';
+    
+                  --v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+                  v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+                  execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+                end
+            end
+    
+            v_DES_CRITICA_CTB = COALESCE(v_DES_CRITICA_CTB, '');
+            if ((coalesce(:v_COD_BANCO_PGTO, 0) = 0) or (coalesce(:v_DES_CC, '') = ''))  then
+            begin
+              if (v_FLG_ESTORNO = 'S') then
+                EXECUTE PROCEDURE STP_DATE_TO_STR (:v_DTA_ORDENADA)
+                  RETURNING_VALUES(:V_DTA_QUIT_FORMATADA);
+              else
+                EXECUTE PROCEDURE STP_DATE_TO_STR (:v_DTA_QUITADA)
+                  RETURNING_VALUES(:V_DTA_QUIT_FORMATADA);
+    
+              v_DES_CRITICA_CTB = 'Conta Corrente nao vinculada ao titulo. ' ||
+                'Vr. Parcela: ' || round(:v_VAL_PARCELA_FLX, 2) || ' Parceiro: ' ||
+                  :v_TIPO_PARCEIRO_DESC || ' ' || :v_COD_PARCEIRO_CTB || ' - ' || :v_DES_PARCEIRO ||
+                    ' Dta.Quit: ' || :V_DTA_QUIT_FORMATADA || '.' || '|';
+    
+              --v_TIPO_STATUS_CTB = 2; /*CRITICADO*/
+              v_QTD_REG_CRITICADO = :v_QTD_REG_CRITICADO + 1;
+              execute procedure STP_INSERE_CRITICA_CTB(v_DES_CRITICA_CTB, v_COD_CHAVE_FIN, v_DTA_QUITADA, :v_COD_LOJA);
+    
+              /*UPDATE TAB_FLUXO
+              SET
+                TIPO_STATUS_CTB = :v_TIPO_STATUS_CTB,
+                DES_CRITICA_CTB = :v_DES_CRITICA_CTB
+              WHERE
+                COD_CHAVE = :REC_COD_CHAVE_FIN;*/
+    
+            end 
+            /*exception exc_cgc_cpf('Chave : ' || :V_DES_CRITICA_CC);*/
+          /*criticas*/
+    
+          /*se um ou mais titulos do lote gerarem critica serah
+          deletado a contabilizacao do lote inteiro*/
+          if (v_QTD_REG_CRITICADO > 0) then
+          begin
+            DELETE FROM TAB_DIARIO
+            WHERE
+            NUM_STATUS = 0
+            AND
+            FLG_AUTO = 1 /* AUTOMATICO */
+            AND
+            TIPO_OPERACAO in (2,3) /* QUITACAO */
+            AND
+            COD_LOTE_LANCTO = :v_COD_LOTE_LANCTO;
+
+            suspend;
+          end
+
+
+          if (v_QTD_REG_CRITICADO = 0) then
+          begin
+              if (v_NUM_DOCTO_PGTO is null) then
+                v_NUM_DOCTO_PGTO = '';
+
+              if (v_FLG_ESTORNO = 'S') then
+                v_DTA_LANCAMENTO = v_DTA_ORDENADA;
+              else
+                v_DTA_LANCAMENTO = v_DTA_QUITADA;
+
+              if (v_DTA_LANCAMENTO is null) then
+                v_DTA_LANCAMENTO = v_DTA_ORDENADA;
+    
+              execute procedure STP_HISTORICO_PADRAO(:V_COD_HISTORICO_PREVIA, :v_COD_CONTA_PARCEIRO, 2,
+              :v_NUM_PARCELA, :v_QTD_PARCELA, :v_DTA_VENCIMENTO,
+              :v_NUM_DOCTO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, :v_DES_ENTIDADE)
+              returning_values(:v_COMPLEMENTO);
+
+              v_COD_HISTORICO = v_COD_HISTORICO_PREVIA;
+    
+              v_NUM_REG = v_NUM_REG + 1;
+    
+    
+              if ((v_TIPO_CONTA = 0) and (v_COD_CONTA_DEB_PREVIA is not null)) then
+              begin
+                  if (v_FLG_ESTORNO = 'S') then
+                  begin
+                      v_COMPLEMENTO = '(ESTORNO) ' || v_COMPLEMENTO;
+                      v_DTA_LANCAMENTO = v_DTA_ORDENADA;
+    
+                      if (EXTRACT(MONTH FROM v_DTA_LANCAMENTO) < 10) then
+                        v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || '0' || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+                      else
+                        v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+    
+    
+                      if ((:v_QTD_REG > 1) or
+                          (:v_TOT_VAL_ACRESCIMOS <> 0) or
+                          (:v_TOT_VAL_DEDUCOES <> 0) or
+                          (:v_TOT_VAL_ACRESCIMOS_CHEQUE <> 0) or
+                          (:v_TOT_VAL_DEDUCOES_CHEQUE <> 0)) then
+                      begin
+                          v_FLG_LANCTO_MULTIPLO = 'S';
+    
+                          if (v_NUM_REG = 1) then
+                          begin
+                            if (v_VAL_PARCELA <> 0.00) then
+                            begin
+                                v_CONTA_CONTABIL_CRED = '';
+                                v_COD_CONTA_CRED = null;
+                                V_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_CRED_PREVIA;
+                                v_COD_CONTA_DEB = v_COD_CONTA_CRED_PREVIA;
+
+                                execute procedure STP_RET_QTD_LOJAS_DIF_CC(v_COD_CHAVE_MOVBCO, v_COD_LOJA_CC)
+                                returning_values(v_QTD_LOJAS_DIF_CC);
+
+                                /*SE LOJA DO TITULO FOR IGUAL A LOJA DA CONTA CORRENTE*/
+                                /*ISSO PARA NAO FERRAR QDO USA A CONTA TRANSITORIA NA QUITACAO MULTILOJA*/
+                                if (v_QTD_LOJAS_DIF_CC = 0) then
+                                begin
+                                  v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_BCO;
+                                  v_COD_CONTA_DEB = v_COD_CONTA_BANCO;
+                                end
+
+                                v_VALOR = :v_VAL_PARCELA;
+        
+                                if (coalesce(v_COD_HIST_PAG_DIV, 0) <> 0) then
+                                begin
+                                  execute procedure STP_HISTORICO_PADRAO(:v_COD_HIST_PAG_DIV, v_COD_CONTA_DEB, 2,
+                                  0, 0, NULL,
+                                  '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+                                  returning_values(:v_COMPLEMENTO_DIV);
+        
+                                  v_COD_HISTORICO = :v_COD_HIST_PAG_DIV;
+                                  v_COMPLEMENTO = '(ESTORNO) ' || :v_COMPLEMENTO_DIV;
+                                end
+        
+                                SUSPEND;
+                            end
+
+                            if (v_VAL_PARCELA_CHEQUE <> 0.00) then
+                            begin
+                                v_CONTA_CONTABIL_CRED = '';
+                                v_COD_CONTA_CRED = null;
+                                V_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_CRED_PREVIA;
+                                v_COD_CONTA_DEB = v_COD_CONTA_CRED_PREVIA;
+                                v_VALOR = :v_VAL_PARCELA_CHEQUE;
+        
+                                if (coalesce(v_COD_HIST_PAG_DIV, 0) <> 0) then
+                                begin
+                                  execute procedure STP_HISTORICO_PADRAO(:v_COD_HIST_PAG_DIV, v_COD_CONTA_DEB, 2,
+                                  0, 0, NULL,
+                                  '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+                                  returning_values(:v_COMPLEMENTO_DIV);
+        
+                                  v_COD_HISTORICO = :v_COD_HIST_PAG_DIV;
+                                  v_COMPLEMENTO = '(ESTORNO) ' || :v_COMPLEMENTO_DIV;
+                                end
+        
+                                SUSPEND;
+                            end
+                          end
+                
+                
+                          v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_DEB_PREVIA;
+                          v_COD_CONTA_CRED = v_COD_CONTA_DEB_PREVIA;
+                          V_CONTA_CONTABIL_DEB = '';
+                          v_COD_CONTA_DEB = null;
+                          v_VALOR = :V_VALOR_PREVIA;
+    
+                          execute procedure STP_HISTORICO_PADRAO(:V_COD_HISTORICO_PREVIA, :v_COD_CONTA_PARCEIRO, 2,
+                          :v_NUM_PARCELA, :v_QTD_PARCELA, :v_DTA_VENCIMENTO,
+                          :v_NUM_DOCTO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, :v_DES_ENTIDADE)
+                          returning_values(:v_COMPLEMENTO);
+    
+                          v_COMPLEMENTO = '(ESTORNO) ' || v_COMPLEMENTO;
+    
+                          v_COD_HISTORICO = V_COD_HISTORICO_PREVIA;
+    
+                          SUSPEND;
+                      end
+                      else
+                      begin
+                        v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_DEB_PREVIA;
+                        v_COD_CONTA_CRED = v_COD_CONTA_DEB_PREVIA;
+                        V_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_CRED_PREVIA;
+                        v_COD_CONTA_DEB = v_COD_CONTA_CRED_PREVIA;
+                        if (v_VAL_PARCELA <> 0.00) then
+                          v_VALOR = :v_VAL_PARCELA;
+
+                        if (v_VAL_PARCELA_CHEQUE <> 0.00) then
+                          v_VALOR = :v_VAL_PARCELA_CHEQUE;
+                        SUSPEND;
+                      end
+    
+                    /*insere credito para eventos de deducao*/
+                    if ((v_DES_EVENTO_PREVIA <> 'VALOR PARCELA') and (v_TIPO_OPERACAO_PREVIA = 1)) then
+                    begin
+                      v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_CRED_PREVIA;
+                      v_COD_CONTA_DEB = v_COD_CONTA_CRED_PREVIA;
+                      V_CONTA_CONTABIL_CRED = '';
+                      v_COD_CONTA_CRED = null; 
+                      v_VALOR = :v_VALOR_PREVIA;
+                      SUSPEND;
+                    end
+    
+                  end
+                  else
+                  begin
+                      v_DTA_LANCAMENTO = v_DTA_QUITADA;
+    
+                      if (v_DTA_LANCAMENTO is null) then
+                        v_DTA_LANCAMENTO = v_DTA_ORDENADA;
+    
+                      if (EXTRACT(MONTH FROM v_DTA_LANCAMENTO) < 10) then
+                        v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || '0' || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+                      else
+                        v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+    
+                      if ((:v_QTD_REG > 1) or
+                          (:v_TOT_VAL_ACRESCIMOS <> 0) or
+                          (:v_TOT_VAL_DEDUCOES <> 0) or
+                          (:v_TOT_VAL_ACRESCIMOS_CHEQUE <> 0) or
+                          (:v_TOT_VAL_DEDUCOES_CHEQUE <> 0)) then
+                      begin
+                          v_FLG_LANCTO_MULTIPLO = 'S';
+    
+                          if (v_NUM_REG = 1) then
+                          begin
+                            if (v_VAL_PARCELA <> 0.00) then
+                            begin
+                                v_CONTA_CONTABIL_DEB = '';
+                                v_COD_CONTA_DEB = null;
+                                V_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_CRED_PREVIA;
+                                v_COD_CONTA_CRED = v_COD_CONTA_CRED_PREVIA;
+
+                                execute procedure STP_RET_QTD_LOJAS_DIF_CC(v_COD_CHAVE_MOVBCO, v_COD_LOJA_CC)
+                                returning_values(v_QTD_LOJAS_DIF_CC);
+
+                                /*SE LOJA DO TITULO FOR IGUAL A LOJA DA CONTA CORRENTE*/
+                                /*ISSO PARA NAO FERRAR QDO USA A CONTA TRANSITORIA NA QUITACAO MULTILOJA*/
+                                if (v_QTD_LOJAS_DIF_CC = 0) then
+                                begin
+                                  v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_BCO;
+                                  v_COD_CONTA_CRED = v_COD_CONTA_BANCO;
+                                end
+
+                                v_VALOR = :v_VAL_PARCELA;
+        
+                                if (coalesce(v_COD_HIST_PAG_DIV, 0) <> 0) then
+                                begin
+                                  execute procedure STP_HISTORICO_PADRAO(:v_COD_HIST_PAG_DIV, v_COD_CONTA_CRED, 2,
+                                  0, 0, NULL,
+                                  '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+                                  returning_values(:v_COMPLEMENTO_DIV);
+        
+                                  v_COD_HISTORICO = :v_COD_HIST_PAG_DIV;
+                                  v_COMPLEMENTO = :v_COMPLEMENTO_DIV;
+                                end
+        
+                                SUSPEND;
+                            end
+
+                            if (v_VAL_PARCELA_CHEQUE <> 0.00) then
+                            begin
+                                v_CONTA_CONTABIL_DEB = '';
+                                v_COD_CONTA_DEB = null;
+                                V_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_CRED_PREVIA;
+                                v_COD_CONTA_CRED = v_COD_CONTA_CRED_PREVIA;
+                                v_VALOR = :v_VAL_PARCELA_CHEQUE;
+        
+                                if (coalesce(v_COD_HIST_PAG_DIV, 0) <> 0) then
+                                begin
+                                  execute procedure STP_HISTORICO_PADRAO(:v_COD_HIST_PAG_DIV, v_COD_CONTA_CRED, 2,
+                                  0, 0, NULL,
+                                  '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+                                  returning_values(:v_COMPLEMENTO_DIV);
+        
+                                  v_COD_HISTORICO = :v_COD_HIST_PAG_DIV;
+                                  v_COMPLEMENTO = :v_COMPLEMENTO_DIV;
+                                end
+        
+                                SUSPEND;
+                            end
+                          end
+                
+                
+                          v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_DEB_PREVIA;
+                          v_COD_CONTA_DEB = v_COD_CONTA_DEB_PREVIA;
+                          V_CONTA_CONTABIL_CRED = '';
+                          v_COD_CONTA_CRED = null;
+                          v_VALOR = :V_VALOR_PREVIA;
+    
+                          execute procedure STP_HISTORICO_PADRAO(:V_COD_HISTORICO_PREVIA, :v_COD_CONTA_PARCEIRO, 2,
+                          :v_NUM_PARCELA, :v_QTD_PARCELA, :v_DTA_VENCIMENTO,
+                          :v_NUM_DOCTO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, :v_DES_ENTIDADE)
+                          returning_values(:v_COMPLEMENTO);
+    
+                          v_COD_HISTORICO = V_COD_HISTORICO_PREVIA;
+    
+                          SUSPEND;
+                      end
+                      else
+                      begin
+                        v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_DEB_PREVIA;
+                        v_COD_CONTA_DEB = v_COD_CONTA_DEB_PREVIA;
+                        v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_CRED_PREVIA;
+                        v_COD_CONTA_CRED = v_COD_CONTA_CRED_PREVIA;
+                        if (v_VAL_PARCELA <> 0.00) then
+                          v_VALOR = :v_VAL_PARCELA;
+
+                        if (v_VAL_PARCELA_CHEQUE <> 0.00) then
+                          v_VALOR = :v_VAL_PARCELA_CHEQUE;
+
+                        v_COD_HISTORICO = v_COD_HISTORICO_PREVIA;
+                        SUSPEND;
+                      end
+    
+                    /*insere credito para eventos de deducao*/
+                    if ((v_DES_EVENTO_PREVIA <>  'VALOR PARCELA') and (v_TIPO_OPERACAO_PREVIA = 1)) then
+                    begin
+                      v_CONTA_CONTABIL_DEB = '';
+                      v_COD_CONTA_DEB = null;
+                      V_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_CRED_PREVIA;
+                      v_COD_CONTA_CRED = v_COD_CONTA_CRED_PREVIA;
+                      v_VALOR = :v_VALOR_PREVIA;
+                      SUSPEND;
+                    end
+                  end
+              end /*SE FOR PAGAMENTO*/
+
+              if (v_TIPO_CONTA = 1) then
+              begin
+                  if (v_FLG_ESTORNO = 'S') then
+                  begin
+                    v_COD_CONTA_ESTORNO = NULL;
+                    if ((v_COD_CONTA_ESTORNO is null) or (v_NUM_TIPO <> 2))  then
+                    begin
+                      v_COMPLEMENTO = '(ESTORNO) ' || v_COMPLEMENTO;
+                      v_DTA_LANCAMENTO = v_DTA_ORDENADA;
+    
+                      if (EXTRACT(MONTH FROM v_DTA_LANCAMENTO) < 10) then
+                        v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || '0' || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+                      else
+                        v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+    
+    
+                      if ((:v_QTD_REG > 1) or
+                          (:v_TOT_VAL_ACRESCIMOS <> 0) or
+                          (:v_TOT_VAL_DEDUCOES <> 0) or
+                          (:v_TOT_VAL_ACRESCIMOS_CHEQUE <> 0) or
+                          (:v_TOT_VAL_DEDUCOES_CHEQUE <> 0)) then
+                      begin
+                          v_FLG_LANCTO_MULTIPLO = 'S';
+    
+                          if (v_NUM_REG = 1) then
+                          begin
+                            if (v_VAL_PARCELA <> 0.00) then
+                            begin
+                                v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_DEB_PREVIA;
+                                v_COD_CONTA_CRED = v_COD_CONTA_DEB_PREVIA;
+                                V_CONTA_CONTABIL_DEB = '';
+                                v_COD_CONTA_DEB = null;
+
+                                execute procedure STP_RET_QTD_LOJAS_DIF_CC(v_COD_CHAVE_MOVBCO, v_COD_LOJA_CC)
+                                returning_values(v_QTD_LOJAS_DIF_CC);
+
+                                /*SE LOJA DO TITULO FOR IGUAL A LOJA DA CONTA CORRENTE*/
+                                /*ISSO PARA NAO FERRAR QDO USA A CONTA TRANSITORIA NA QUITACAO MULTILOJA*/
+                                if (v_QTD_LOJAS_DIF_CC = 0) then
+                                begin
+                                  v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_BCO;
+                                  v_COD_CONTA_CRED = v_COD_CONTA_BANCO;
+                                end
+
+                                v_VALOR = :v_VAL_PARCELA;
+    
+                                if (coalesce(v_COD_HIST_REC_DIV, 0) <> 0) then
+                                begin
+                                  execute procedure STP_HISTORICO_PADRAO(:v_COD_HIST_REC_DIV, v_COD_CONTA_CRED, 2,
+                                  0, 0, NULL,
+                                  '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+                                  returning_values(:v_COMPLEMENTO_DIV);
+        
+                                  v_COD_HISTORICO = :v_COD_HIST_REC_DIV;
+                                  v_COMPLEMENTO = '(ESTORNO) ' || :v_COMPLEMENTO_DIV;
+                                end
+        
+                                SUSPEND;
+                            end
+
+                            if (v_VAL_PARCELA_CHEQUE <> 0.00) then
+                            begin
+                                v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_DEB_PREVIA;
+                                v_COD_CONTA_CRED = v_COD_CONTA_DEB_PREVIA;
+                                V_CONTA_CONTABIL_DEB = '';
+                                v_COD_CONTA_DEB = null;
+                                v_VALOR = :v_VAL_PARCELA_CHEQUE;
+    
+                                if (coalesce(v_COD_HIST_REC_DIV, 0) <> 0) then
+                                begin
+                                  execute procedure STP_HISTORICO_PADRAO(:v_COD_HIST_REC_DIV, v_COD_CONTA_CRED, 2,
+                                  0, 0, NULL,
+                                  '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+                                  returning_values(:v_COMPLEMENTO_DIV);
+        
+                                  v_COD_HISTORICO = :v_COD_HIST_REC_DIV;
+                                  v_COMPLEMENTO = '(ESTORNO) ' || :v_COMPLEMENTO_DIV;
+                                end
+        
+                                SUSPEND;
+                            end
+                          end
+                
+                
+                          v_CONTA_CONTABIL_CRED = '';
+                          v_COD_CONTA_CRED = null;
+                          v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_CRED_PREVIA;
+                          v_COD_CONTA_DEB = v_COD_CONTA_CRED_PREVIA;
+                          v_VALOR = :V_VALOR_PREVIA;
+    
+                          execute procedure STP_HISTORICO_PADRAO(:V_COD_HISTORICO_PREVIA, :v_COD_CONTA_PARCEIRO, 2,
+                          :v_NUM_PARCELA, :v_QTD_PARCELA, :v_DTA_VENCIMENTO,
+                          :v_NUM_DOCTO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, :v_DES_ENTIDADE)
+                          returning_values(:v_COMPLEMENTO);
+    
+                          v_COMPLEMENTO = '(ESTORNO) ' || v_COMPLEMENTO;
+    
+                          v_COD_HISTORICO = V_COD_HISTORICO_PREVIA;
+    
+                          SUSPEND;
+                      end
+                      else
+                      begin
+                        v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_DEB_PREVIA;
+                        v_COD_CONTA_CRED = v_COD_CONTA_DEB_PREVIA;
+                        V_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_CRED_PREVIA;
+                        v_COD_CONTA_DEB = v_COD_CONTA_CRED_PREVIA;
+                        if (v_VAL_PARCELA <> 0.00) then
+                          v_VALOR = :v_VAL_PARCELA;
+
+                        if (v_VAL_PARCELA_CHEQUE <> 0.00) then
+                          v_VALOR = :v_VAL_PARCELA_CHEQUE;
+                        SUSPEND;
+                      end
+    
+                    /*insere credito para eventos de deducao*/
+                    if ((v_DES_EVENTO_PREVIA <> 'VALOR PARCELA') and (v_TIPO_OPERACAO_PREVIA = 1)) then
+                    begin
+                      v_CONTA_CONTABIL_DEB = '';
+                      v_COD_CONTA_DEB = null;
+                      V_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_DEB_PREVIA;
+                      v_COD_CONTA_CRED = v_COD_CONTA_DEB_PREVIA;
+                      v_VALOR = :v_VALOR_PREVIA;
+                      SUSPEND;
+                    end
+                   end /*if (v_COD_CONTA_ESTORNO is null)*/
+                   else
+                   begin
+                      /*TIPO DE ENTIDADE CHEQUE*/
+                      if (v_NUM_TIPO = 2) then
+                      begin
+                          v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_ESTORNO;
+                          v_COD_CONTA_DEB = v_COD_CONTA_ESTORNO;
+                          V_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_BCO;
+                          v_COD_CONTA_CRED = v_COD_CONTA_BANCO;
+                          v_VALOR = :v_VAL_DOCTO;
+    
+                          execute procedure STP_HISTORICO_PADRAO(:v_COD_HISTORICO_ESTORNO, :v_COD_CONTA_PARCEIRO, 2,
+                          :v_NUM_PARCELA, :v_QTD_PARCELA, :v_DTA_VENCIMENTO,
+                          :v_NUM_DOCTO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, :v_DES_ENTIDADE)
+                          returning_values(:v_COMPLEMENTO);
+    
+                          v_COMPLEMENTO = '(ESTORNO) ' || v_COMPLEMENTO;
+                          v_COD_HISTORICO = v_COD_HISTORICO_ESTORNO;
+    
+                          SUSPEND;
+                      end
+                   end
+                  end
+                  else
+                  if (v_FLG_ESTORNO = 'N') then
+                  begin
+                    v_DTA_LANCAMENTO = v_DTA_QUITADA;
+    
+                    if (v_DTA_LANCAMENTO is null) then
+                      v_DTA_LANCAMENTO = v_DTA_ORDENADA;
+    
+                    if (EXTRACT(MONTH FROM v_DTA_LANCAMENTO) < 10) then
+                      v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || '0' || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+                    else
+                      v_ANO_MES = EXTRACT(YEAR FROM v_DTA_LANCAMENTO) || EXTRACT(MONTH FROM v_DTA_LANCAMENTO);
+
+                    SELECT
+                      COUNT(*) AS NUM_REG
+                    FROM
+                      TAB_DIARIO
+                    WHERE
+                      TAB_DIARIO.COD_LOJA = :v_COD_LOJA
+                      AND
+                      TAB_DIARIO.COD_CONTA_DEB = :v_COD_CONTA_ESTORNO
+                      AND
+                      TAB_DIARIO.COD_CHAVE_FIN = :v_COD_CHAVE_FIN
+                      AND
+                      TAB_DIARIO.TIPO_OPERACAO in (2,3)
+                      AND
+                      TAB_DIARIO.VALOR = :v_VAL_DOCTO
+                      AND
+                      TAB_DIARIO.DTA_LANCAMENTO <= :v_DTA_ORDENADA
+                    into
+                      v_NUM_REG_ESTORNO;
+
+                    if ((v_NUM_REG_ESTORNO > 0) and (v_NUM_TIPO = 2) and (v_COD_CONTA_ESTORNO is not null)) then
+                    begin
+                      v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_BCO;
+                      v_COD_CONTA_DEB = v_COD_CONTA_BANCO;
+                      V_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_ESTORNO;
+                      v_COD_CONTA_CRED = v_COD_CONTA_ESTORNO;
+                      v_VALOR = :v_VAL_DOCTO;
+
+                      execute procedure STP_HISTORICO_PADRAO(:v_COD_HISTORICO_PREVIA, :v_COD_CONTA_PARCEIRO, 2,
+                      :v_NUM_PARCELA, :v_QTD_PARCELA, :v_DTA_VENCIMENTO,
+                      :v_NUM_DOCTO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, :v_DES_ENTIDADE)
+                      returning_values(:v_COMPLEMENTO);
+
+                      v_COD_HISTORICO = v_COD_HISTORICO_PREVIA;
+
+                      SUSPEND;
+                    end
+                    else
+                    begin
+    
+                      if ((:v_QTD_REG > 1) or
+                          (:v_TOT_VAL_ACRESCIMOS <> 0) or
+                          (:v_TOT_VAL_DEDUCOES <> 0) or
+                          (:v_TOT_VAL_ACRESCIMOS_CHEQUE <> 0) or
+                          (:v_TOT_VAL_DEDUCOES_CHEQUE <> 0)) then
+                      begin
+                          v_FLG_LANCTO_MULTIPLO = 'S';
+    
+                          if (v_NUM_REG = 1) then
+                          begin
+                            if (v_VAL_PARCELA <> 0.00) then
+                            begin
+                                v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_DEB_PREVIA;
+                                v_COD_CONTA_DEB = v_COD_CONTA_DEB_PREVIA;
+                                V_CONTA_CONTABIL_CRED = '';
+                                v_COD_CONTA_CRED = null;
+
+                                execute procedure STP_RET_QTD_LOJAS_DIF_CC(v_COD_CHAVE_MOVBCO, v_COD_LOJA_CC)
+                                returning_values(v_QTD_LOJAS_DIF_CC);
+
+                                /*SE LOJA DO TITULO FOR IGUAL A LOJA DA CONTA CORRENTE*/
+                                /*ISSO PARA NAO FERRAR QDO USA A CONTA TRANSITORIA NA QUITACAO MULTILOJA*/
+                                if (v_QTD_LOJAS_DIF_CC = 0) then
+                                begin
+                                  v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_BCO;
+                                  v_COD_CONTA_DEB = v_COD_CONTA_BANCO;
+                                end
+
+                                v_VALOR = :v_VAL_PARCELA;
+    
+                                if (coalesce(v_COD_HIST_REC_DIV, 0) <> 0) then
+                                begin
+                                  execute procedure STP_HISTORICO_PADRAO(:v_COD_HIST_REC_DIV, v_COD_CONTA_DEB, 2,
+                                  0, 0, NULL,
+                                  '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+                                  returning_values(:v_COMPLEMENTO_DIV);
+        
+                                  v_COD_HISTORICO = :v_COD_HIST_REC_DIV;
+                                  v_COMPLEMENTO = :v_COMPLEMENTO_DIV;
+                                end
+        
+                                SUSPEND;
+                            end
+
+                            if (v_VAL_PARCELA_CHEQUE <> 0.00) then
+                            begin
+                                v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_DEB_PREVIA;
+                                v_COD_CONTA_DEB = v_COD_CONTA_DEB_PREVIA;
+                                V_CONTA_CONTABIL_CRED = '';
+                                v_COD_CONTA_CRED = null;
+                                v_VALOR = :v_VAL_PARCELA_CHEQUE;
+    
+                                if (coalesce(v_COD_HIST_REC_DIV, 0) <> 0) then
+                                begin
+                                  execute procedure STP_HISTORICO_PADRAO(:v_COD_HIST_REC_DIV, v_COD_CONTA_DEB, 2,
+                                  0, 0, NULL,
+                                  '', :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, '')
+                                  returning_values(:v_COMPLEMENTO_DIV);
+        
+                                  v_COD_HISTORICO = :v_COD_HIST_REC_DIV;
+                                  v_COMPLEMENTO = :v_COMPLEMENTO_DIV;
+                                end
+        
+                                SUSPEND;
+                            end
+                          end
+                
+                
+                          v_CONTA_CONTABIL_DEB = '';
+                          v_COD_CONTA_DEB = null;
+                          V_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_CRED_PREVIA;
+                          v_COD_CONTA_CRED = v_COD_CONTA_CRED_PREVIA;
+                          v_VALOR = :V_VALOR_PREVIA;
+    
+                          execute procedure STP_HISTORICO_PADRAO(:V_COD_HISTORICO_PREVIA, :v_COD_CONTA_PARCEIRO, 2,
+                          :v_NUM_PARCELA, :v_QTD_PARCELA, :v_DTA_VENCIMENTO,
+                          :v_NUM_DOCTO, :v_DTA_LANCAMENTO, :v_NUM_DOCTO_PGTO, :v_DES_ENTIDADE)
+                          returning_values(:v_COMPLEMENTO);
+    
+                          v_COD_HISTORICO = V_COD_HISTORICO_PREVIA;
+    
+                          SUSPEND;
+                      end
+                      else
+                      begin
+                        v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_DEB_PREVIA;
+                        v_COD_CONTA_DEB = v_COD_CONTA_DEB_PREVIA;
+                        v_CONTA_CONTABIL_CRED = v_CONTA_CONTABIL_CRED_PREVIA;
+                        v_COD_CONTA_CRED = v_COD_CONTA_CRED_PREVIA;
+                        if (v_VAL_PARCELA <> 0.00) then
+                          v_VALOR = :v_VAL_PARCELA;
+
+                        if (v_VAL_PARCELA_CHEQUE <> 0.00) then
+                          v_VALOR = :v_VAL_PARCELA_CHEQUE;
+                        v_COD_HISTORICO = v_COD_HISTORICO_PREVIA;
+                        SUSPEND;
+                      end
+    
+                    /*insere debito para eventos de deducao*/
+                    if ((v_DES_EVENTO_PREVIA <>  'VALOR PARCELA') and (v_TIPO_OPERACAO_PREVIA = 1)) then
+                    begin
+                      v_CONTA_CONTABIL_DEB = v_CONTA_CONTABIL_DEB_PREVIA;
+                      v_COD_CONTA_DEB = v_COD_CONTA_DEB_PREVIA;
+                      v_CONTA_CONTABIL_CRED = '';
+                      v_COD_CONTA_CRED = null;
+                      v_VALOR = :v_VALOR_PREVIA;
+                      SUSPEND;
+                    end
+                   end /**/
+                  end
+              end /*SE FOR RECEBIMENTO*/
+
+            end /* if v_QTD_REG_CRITICADO = 0*/
+        end /*PREVIA*/
+    end
+  end /*TAB_MOV_BCO*/
+end^
+
+SET TERM ; ^
+
+GRANT SELECT ON TAB_PARAMETRO_LOJA TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_FLUXO_LOTE TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_MOV_BCO TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_ENTIDADE TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_SUBCATEGORIA TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_FLUXO_LOTE_EVENTO TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_EVENTO_FINANCEIRO TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_BANCO_CC TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_ADMINISTRADORA TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_BANDEIRA TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT ON TAB_PLANO_CONTA TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_CONTA_CTB_PARCEIRO TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT SELECT,DELETE ON TAB_DIARIO TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_PREVIA_LANCTO_CTB_FIN TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_INSERE_CRITICA_CTB TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_RET_QTD_LOJAS_DIF_CC TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_DATE_TO_STR TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_HISTORICO_PADRAO TO PROCEDURE STP_RETORNA_DIARIO_FIN;
+
+GRANT EXECUTE ON PROCEDURE STP_RETORNA_DIARIO_FIN TO PROCEDURE STP_INSERE_DIARIO_FIN;
+GRANT EXECUTE ON PROCEDURE STP_RETORNA_DIARIO_FIN TO "PUBLIC";
+GRANT EXECUTE ON PROCEDURE STP_RETORNA_DIARIO_FIN TO SYSDBA;
